@@ -319,7 +319,7 @@ namespace ufo
     getPlusTerms(l, terms);
     for (auto & a : terms)
     {
-      if (contains(var, a))
+      if (contains(a, var))
       {
         lhs = a;
         continue;
@@ -331,7 +331,7 @@ namespace ufo
     getPlusTerms(r, terms);
     for (auto & a : terms)
     {
-      if (contains(var, a))
+      if (contains(a, var))
       {
         assert(lhs == NULL);
         lhs = additiveInverse(a);
