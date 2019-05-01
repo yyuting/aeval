@@ -25,15 +25,20 @@ namespace ufo
     smt (z3)
     {}
 
-    Expr getModel(ExprVector& vars)
+    template <typename T> Expr getModel(T& vars)
     {
       ExprVector eqs;
+      getModel(vars, eqs);
+      return conjoin (eqs, efac);
+    }
+
+    template <typename T> void getModel(T& vars, ExprVector& eqs)
+    {
       ZSolver<EZ3>::Model m = smt.getModel();
       for (auto & v : vars) if (v != m.eval(v))
       {
         eqs.push_back(mk<EQ>(v, m.eval(v)));
       }
-      return conjoin (eqs, efac);
     }
 
     /**
@@ -134,7 +139,7 @@ namespace ufo
     Expr simplifyITE(Expr ex, Expr upLevelCond)
     {
       if (isOpX<ITE>(ex)){
-        
+
         Expr cond = ex->arg(0);
         Expr br1 = ex->arg(1);
         Expr br2 = ex->arg(2);
@@ -157,24 +162,24 @@ namespace ufo
     Expr simplifyITE(Expr ex)
     {
       if (isOpX<ITE>(ex)){
-        
+
         Expr cond = simplifyITE(ex->arg(0));
         Expr br1 = ex->arg(1);
         Expr br2 = ex->arg(2);
-        
+
         if (isOpX<TRUE>(cond)) return br1;
         if (isOpX<FALSE>(cond)) return br2;
-        
+
         if (br1 == br2) return br1;
-        
+
         if (isOpX<TRUE>(br1) && isOpX<FALSE>(br2)) return cond;
 
         if (isOpX<FALSE>(br1) && isOpX<TRUE>(br2)) return mk<NEG>(cond);
-        
+
         return mk<ITE>(cond,
                        simplifyITE(br1, cond),
                        simplifyITE(br2, mk<NEG>(cond)));
-        
+
       }
       else if (isOpX<IMPL>(ex)) {
 
@@ -232,24 +237,40 @@ namespace ufo
     /**
      * Remove some redundant disjuncts from the formula
      */
+    void removeRedundantDisjuncts(ExprSet& disjs)
+    {
+      if (disjs.size() < 2) return;
+      ExprSet newDisjs = disjs;
+
+      for (auto & disj : disjs)
+      {
+        if (isFalse (disj))
+        {
+          newDisjs.erase(disj);
+          continue;
+        }
+
+        ExprSet newDisjsTry = newDisjs;
+        newDisjsTry.erase(disj);
+
+        if (implies (disj, disjoin(newDisjsTry, efac))) newDisjs.erase(disj);
+      }
+      disjs = newDisjs;
+    }
+
+    /**
+     * Remove some redundant disjuncts from the formula
+     */
     Expr removeRedundantDisjuncts(Expr exp)
     {
-      ExprSet newDisj;
       ExprSet disjs;
       getDisj(exp, disjs);
-      
       if (disjs.size() < 2) return exp;
-
-      for (auto & disj : disjs)      // GF: todo: incremental solving
+      else
       {
-        if (isFalse (disj)) continue;
-        
-        if (isEquiv (disjoin(newDisj, efac), mk<OR>(disjoin(newDisj, efac), disj))) continue;
-        
-        newDisj.insert(disj);
+        removeRedundantDisjuncts(disjs);
+        return disjoin(disjs, efac);
       }
-      
-      return disjoin(newDisj, efac);
     }
 
     /**
@@ -275,6 +296,14 @@ namespace ufo
     {
       smt.reset();
       smt.assertExpr(form);
+      smt.toSmtLib (outs());
+      outs().flush ();
+    }
+
+    template <typename T> void serialize_formula(T& forms)
+    {
+      smt.reset();
+      for (auto form : forms) smt.assertExpr(form);
       smt.toSmtLib (outs());
       outs().flush ();
     }

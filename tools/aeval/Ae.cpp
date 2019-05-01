@@ -55,6 +55,7 @@ int main (int argc, char ** argv)
   bool allincl = getBoolValue("--all-inclusive", false, argc, argv);
   bool compact = getBoolValue("--compact", false, argc, argv);
   bool debug = getBoolValue("--debug", false, argc, argv);
+  bool split = getBoolValue("--split", false, argc, argv);
 
   Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
   Expr t = z3_from_smtlib_file (z3, getSmtFileName(2, argc, argv));
@@ -62,7 +63,7 @@ int main (int argc, char ** argv)
   if (allincl)
     getAllInclusiveSkolem(s, t, debug, compact);
   else
-    aeSolveAndSkolemize(s, t, skol, debug, compact);
+    aeSolveAndSkolemize(s, t, skol, debug, compact, split);
 
   return 0;
 }

@@ -67,6 +67,17 @@ namespace ufo
     return intersect.size();
   }
 
+  inline static Expr multVar(Expr var, int coef){
+    if (coef == 0)
+      return mkTerm (mpz_class (0), var->getFactory());
+    if (isOpX<MPZ>(var)) return
+      mkTerm (mpz_class (lexical_cast<int>(var) * coef), var->getFactory());
+    if (isOpX<MPQ>(var)) return
+      mkTerm (mpq_class (lexical_cast<int>(var) * coef), var->getFactory());
+
+    return mk<MULT>(mkTerm (mpz_class (coef), var->getFactory()), var);
+  }
+
   /**
    * Self explanatory
    */
@@ -166,6 +177,13 @@ namespace ufo
     }
   }
 
+  bool isBoolVarOrNegation(Expr exp)
+  {
+    if (bind::isBoolConst(exp)) return true;
+    if (isOpX<NEG>(exp)) return isBoolVarOrNegation(exp->left());
+    return false;
+  }
+
   inline static Expr reBuildNegCmp(Expr term, Expr lhs, Expr rhs)
   {
     if (isOpX<EQ>(term))
@@ -224,7 +242,7 @@ namespace ufo
       return mk<MULT>(mkTerm (mpz_class (1), e->getFactory()), e);
     }
   }
-  
+
   /**
    * Represent Zero as multiplication
    */
@@ -233,7 +251,7 @@ namespace ufo
       return mk<MULT>(multiplier, e);
     else return e;
   }
-  
+
   /**
    * Rewrites distributivity rule:
    * a*b + a*c -> a*(b + c)
@@ -245,7 +263,7 @@ namespace ufo
     ExprSet newE;
     newE.insert(multiplier->right());
     multiplier = multiplier->left();
-    
+
     for (unsigned i = 1; i < e->arity (); i++){
       Expr a = mult(e->arg(i));
       if (isOpX<MULT>(a)){
@@ -276,11 +294,11 @@ namespace ufo
       }
       res = mknary<PLUS>(expClauses);
     }
-    
+
     if (isOpX<MULT>(e)) {
       if (lexical_cast<string>(e->left())  == "-1"){
         Expr l = e->right();
-        
+
         if (isOpX<PLUS>(l)) {
           ExprSet expClauses;
           for (auto it = l->args_begin(), end = l->args_end(); it != end; ++it){
@@ -290,10 +308,10 @@ namespace ufo
         }
       }
     }
-    
+
     return res;
   }
-  
+
   /**
    * Helper used in ineqReverter
    */
@@ -305,7 +323,7 @@ namespace ufo
 
     return mk<T>(additiveInverse(e->left()), additiveInverse(exprDistributor(e->right())));
   }
-  
+
   /**
    *  Helper used in ineqMover
    */
@@ -339,11 +357,11 @@ namespace ufo
       }
       rhs.insert(a);
     }
-    
+
     if (lhs != 0) return mk<T>(lhs, mkplus(rhs, e->getFactory()));
     return e;
   }
-  
+
   /**
    * Helper used in exprMover
    */
@@ -356,7 +374,7 @@ namespace ufo
       l = exprSorted(l);
       return mk<T>(r, l);
     }
-    
+
     if (isOpX<MULT>(r)){
       if (r->left() == var || r->right() == var){
         l = exprSorted(l);
@@ -365,7 +383,7 @@ namespace ufo
     }
     return e;
   }
-  
+
   /**
    *  Merge adjacent inequalities
    *  (a <= b && a >= b) -> (a == b)
@@ -391,7 +409,7 @@ namespace ufo
       }
     }
   }
-  
+
   /**
    *  Merge adjacent inequalities
    *  (a <= b && b <= a) -> (a == b)
@@ -413,7 +431,7 @@ namespace ufo
       }
     }
   }
-  
+
   /**
    *  Merge adjacent inequalities
    *  (a <= 0 && -a <= 0) -> (a == 0)
@@ -440,7 +458,7 @@ namespace ufo
       }
     }
   }
-  
+
   /**
    *  Trivial simplifier:
    *  (-1*a <= -1*b) -> (a >= b)
@@ -463,7 +481,7 @@ namespace ufo
       }
     return e;
   }
-  
+
   inline static Expr ineqNegReverter(Expr a){
     if (isOpX<NEG>(a)){
       Expr e = a->arg(0);
@@ -483,7 +501,7 @@ namespace ufo
     }
     return a;
   }
-  
+
   /**
    *  Transform the inequalities by the following rules:
    *  (a + .. + var + .. + b <= c ) -> (var <= -1*a + .. + -1*b + c)
@@ -509,7 +527,7 @@ namespace ufo
       }
     return e;
   }
-  
+
   /**
    *  Move "var" to the left hand side of expression:
    *  (a <= var) -> (var >= b)
@@ -528,7 +546,7 @@ namespace ufo
       }
     return e;
   }
-  
+
   /**
    *
    */
@@ -540,7 +558,7 @@ namespace ufo
     }
     return e;
   }
-  
+
   /**
    * Search for an equality
    */
@@ -580,16 +598,16 @@ namespace ufo
     equalitySearch(substsMap, v);
     return conjoin(substsMap, v->getFactory());
   }
-  
+
   
   template<typename T>
   struct RW
   {
     std::shared_ptr<T> _r;
-    
+
     RW (std::shared_ptr<T> r) : _r(r) {}
     RW (T *r) : _r (r) {}
-    
+
     
     VisitAction operator() (Expr exp)
     {
@@ -597,17 +615,17 @@ namespace ufo
       if (exp->arity() == 0)
         // -- do not descend into non-boolean operators
         return VisitAction::skipKids ();
-      
+
       return VisitAction::changeDoKidsRewrite (exp, _r);
-      
+
     }
   };
-  
+
   inline static Expr simplifiedPlus (Expr exp, Expr to_skip){
     ExprVector args;
     Expr ret;
     bool f = false;
-    
+
     for (ENode::args_iterator it = exp->args_begin(),
          end = exp->args_end(); it != end; ++it){
       if (*it == to_skip) f = true;
@@ -618,37 +636,37 @@ namespace ufo
     {
       args.push_back(additiveInverse(to_skip));
     }
-    
+
     if (args.size() == 1) {
       ret = args[0];
     }
-    
+
     else if (args.size() == 2){
       if (isOpX<UN_MINUS>(args[0]) && !isOpX<UN_MINUS>(args[1]))
         ret = mk<MINUS>(args[1], args[0]->left());
       else if (!isOpX<UN_MINUS>(args[0]) && isOpX<UN_MINUS>(args[1]))
         ret = mk<MINUS>(args[0], args[1]->left());
-      
+
       else ret = mknary<PLUS>(args);
-      
+
     } else {
       ret = mknary<PLUS>(args);
     }
     return ret;
   }
-  
+
   // return a - b
   inline static Expr simplifiedMinus (Expr a, Expr b){
     Expr ret = mk<MINUS>(a, b);
-    
+
     if (a == b) {
       ret = mkTerm (mpz_class (0), a->getFactory());
     } else
-      
+
       if (isOpX<PLUS>(a)){
         return simplifiedPlus(a, b);
       } else
-        
+
         if (isOpX<PLUS>(b)){
           Expr res = simplifiedPlus(b, a);
           return mk<UN_MINUS>(res);
@@ -686,18 +704,18 @@ namespace ufo
                         ret = mk<UN_MINUS>(b);
                       }
                     }
-    
+
     return ret;
   }
-  
+
   struct SimplifyArithmExpr
   {
     ExprFactory &efac;
-    
+
     Expr zero;
     Expr one;
     Expr minus_one;
-    
+
     SimplifyArithmExpr (ExprFactory& _efac):
     efac(_efac)
     {
@@ -705,19 +723,19 @@ namespace ufo
       one = mkTerm (mpz_class (1), efac);
       minus_one = mkTerm (mpz_class (1), efac);
     };
-    
+
     Expr operator() (Expr exp)
     {
       if (isOpX<PLUS>(exp))
       {
         return simplifiedPlus(exp, zero);
       }
-      
+
       if (isOpX<MINUS>(exp) && exp->arity() == 2)
       {
         return simplifiedMinus(exp->left(), exp->right());
       }
-      
+
       if (isOpX<MULT>(exp))
       {
         if (exp->left() == zero) return zero;
@@ -727,7 +745,7 @@ namespace ufo
         if (exp->left() == minus_one) return mk<UN_MINUS>(exp->right());
         if (exp->right() == minus_one) return mk<UN_MINUS>(exp->left());
       }
-      
+
       if (isOpX<UN_MINUS>(exp))
       {
         Expr uneg = exp->left();
@@ -741,7 +759,7 @@ namespace ufo
           if (isOpX<UN_MINUS>(unegr)) return mk<MINUS>(unegr->left(), unegl);
         }
       }
-      
+
       if (isOpX<MINUS>(exp))
       {
         if (isOpX<UN_MINUS>(exp->right())) return mk<PLUS>(exp->left(), exp->right()->left());
@@ -749,48 +767,62 @@ namespace ufo
       return exp;
     }
   };
-  
+
   struct SimplifyBoolExpr
   {
     ExprFactory &efac;
-    
+
     SimplifyBoolExpr (ExprFactory& _efac) : efac(_efac){};
-    
+
     Expr operator() (Expr exp)
     {
       // GF: to enhance
-      
-      if (isOpX<IMPL>(exp))
-      {
-        if (isOpX<TRUE>(exp->right()))
-          return mk<TRUE>(efac);
 
-        if (isOpX<FALSE>(exp->right()))
-          return mk<NEG>(exp->left());
-        
-        return (mk<OR>(
-                 mk<NEG>(exp->left()),
-                 exp->right()));
-      }
-      
       if (isOpX<OR>(exp)){
         for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          
           if (isOpX<TRUE>(*it)) return mk<TRUE>(efac);
-          
           if (isOpX<EQ>(*it) && (*it)->left() == (*it)->right()) return mk<TRUE>(efac);
-          
         }
       }
-      
+
       if (isOpX<AND>(exp)){
         for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          
           if (isOpX<FALSE>(*it)) return mk<FALSE>(efac);
-          
         }
       }
-      
+
+      if (isOpX<EQ>(exp)){
+        if (isOpX<TRUE>(exp->right())) return exp->left();
+        if (isOpX<TRUE>(exp->left())) return exp->right();
+        if (isOpX<FALSE>(exp->right())) return mkNeg(exp->left());
+        if (isOpX<FALSE>(exp->right())) return mkNeg(exp->right());
+      }
+
+      if (isOpX<IMPL>(exp)){
+        if (isOpX<TRUE>(exp->left())) return exp->right();
+        if (isOpX<FALSE>(exp->left())) return mk<TRUE>(exp->getFactory());
+      }
+
+      if (isOpX<ITE>(exp)){
+        Expr cond = exp->arg(0);
+        if (isOpX<TRUE>(cond))
+        {
+          return exp->arg(1);
+        }
+        else if (isOpX<FALSE>(cond))
+        {
+          return exp->arg(2);
+        }
+        else if (isOpX<TRUE>(exp->arg(1)) && isOpX<FALSE>(exp->arg(2)))
+        {
+          return cond;
+        }
+        else if (isOpX<FALSE>(exp->arg(1)) && isOpX<TRUE>(exp->arg(2)))
+        {
+          return mkNeg(cond);
+        }
+      }
+
       return exp;
     }
   };
@@ -800,7 +832,7 @@ namespace ufo
     RW<SimplifyArithmExpr> rw(new SimplifyArithmExpr(exp->getFactory()));
     return dagVisit (rw, exp);
   }
-  
+
   inline static Expr simplifyBool (Expr exp)
   {
     RW<SimplifyBoolExpr> rw(new SimplifyBoolExpr(exp->getFactory()));
@@ -855,7 +887,7 @@ namespace ufo
     }
     return v3;
   }
-  
+
   /**
    * To rem
    */
@@ -864,10 +896,10 @@ namespace ufo
     ExprVector av;
     filter (a, bind::IsConst (), back_inserter (av));
     if (av.size() == 1) if (av[0] == b) return true;
-    
+
     return false;
   }
-  
+
   inline static Expr simplifiedAnd (Expr a, Expr b){
     ExprSet conjs;
     getConj(a, conjs);
@@ -877,8 +909,7 @@ namespace ufo
     (conjs.size() == 1) ? *(conjs.begin()) :
     mknary<AND>(conjs);
   }
-  
-  
+
   inline int intersectSize(ExprVector& a, ExprVector& b){
     ExprSet c;
     for (auto &var: a)
@@ -924,6 +955,26 @@ namespace ufo
     // don't consider ITE-s
     return (isOp<NumericOp>(a) || isOpX<MPZ>(a) || isOpX<MPQ>(a) ||
              bind::isIntConst(a) || bind::isRealConst(a));
+  }
+
+  Expr projectITE(Expr ite, Expr var)
+  {
+    if (isOpX<ITE>(ite))
+    {
+      return mk<ITE>(ite->arg(0), projectITE(ite->arg(1), var), projectITE(ite->arg(2), var));
+    }
+    else
+    {
+      ExprSet cnjs;
+      getConj(ite, cnjs);
+      for (auto & a : cnjs)
+      {
+        if (a->left() == var) return a->right();
+        else if (a->right() == var) return a->left();
+      }
+
+      assert(0);
+    }
   }
 
   struct EqNumMiner : public std::unary_function<Expr, VisitAction>
@@ -976,6 +1027,7 @@ namespace ufo
       dagVisit (trm, exp);
     }
   }
+
 }
 
 #endif
