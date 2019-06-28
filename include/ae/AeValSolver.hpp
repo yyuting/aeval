@@ -251,13 +251,69 @@ namespace ufo
     /**
      * Valid Subset of S (if overall AE-formula is invalid)
      */
-    Expr getValidSubset()
+    Expr getValidSubset(bool compact)
     {
       if (partitioning_size == 0){
-//        outs() << "WARNING: Trivial valid subset (equal to False) due to 0 iterations\n";
+        if (debug) outs() << "WARNING: Trivial valid subset (equal to False) due to 0 iterations\n";
         return mk<FALSE>(efac);
       }
-      return mk<AND>(s, disjoin(projections, efac));
+
+      Expr prs;
+      if (compact)
+      {
+        ExprSet all;
+        vector<ExprSet> pprs;
+
+        for (auto & a : projections)
+        {
+          ExprSet tmp;
+          getConj(a, tmp);
+          pprs.push_back(tmp);
+          all.insert(tmp.begin(), tmp.end());
+        }
+
+        ExprSet common;
+
+        for (auto & a : all)
+        {
+          bool everywhere = true;
+          vector<ExprSet> pprsTmp = pprs;
+          for (auto & p : pprsTmp)
+          {
+            bool found = false;
+            for (auto it = p.begin(); it != p.end(); ++it)
+            {
+              if (*it == a) {
+                found = true;
+                p.erase(it);
+                break;
+              }
+            }
+            if (!found)
+            {
+              everywhere = false;
+              break;
+            }
+          }
+          if (everywhere)
+          {
+            pprs = pprsTmp;
+            common.insert(a);
+          }
+        }
+
+        ExprSet cnjs;
+        for (auto & p : pprs) cnjs.insert(conjoin(p, efac));
+
+        if (!cnjs.empty()) common.insert(simplifyBool(disjoin(cnjs, efac)));
+        prs = conjoin(common, efac);
+      }
+      else
+      {
+        prs = disjoin(projections, efac);
+      }
+      if (isOpX<TRUE>(s)) return prs;
+      return mk<AND>(s, prs);
     }
 
     /**
@@ -956,7 +1012,7 @@ namespace ufo
       }
       else
       {
-        Expr subs = ae.getValidSubset();
+        Expr subs = ae.getValidSubset(false);
         if (isOpX<FALSE>(subs))
         {
 //          for (int j : indexes)
@@ -1311,7 +1367,7 @@ namespace ufo
       outs () << "Iter: " << ae.getPartitioningSize() << "; Result: invalid\n";
       ae.printModelNeg();
       outs() << "\nvalid subset:\n";
-      u.serialize_formula(ae.getValidSubset());
+      u.serialize_formula(ae.getValidSubset(compact));
     } else {
       outs () << "Iter: " << ae.getPartitioningSize() << "; Result: valid\n";
       if (skol)
@@ -1369,7 +1425,7 @@ namespace ufo
           outs () << "Result: invalid\n";
           ae.printModelNeg();
           outs() << "\nvalid subset:\n";
-          u.serialize_formula(ae.getValidSubset());
+          u.serialize_formula(ae.getValidSubset(compact));
           return;
         }
         break;
