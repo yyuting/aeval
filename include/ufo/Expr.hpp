@@ -2328,6 +2328,10 @@ namespace expr
 
         if (isOp<NumericOp>(v)) return typeOf(v->left());
         if (isOpX<ITE>(v)) return typeOf(v->last());
+
+        if (isOpX<STORE>(v)) return typeOf(v->left());
+        if (isOpX<SELECT>(v)) return typeOf(v->last());
+
         std::cerr << "WARNING: could not infer type of: " << *v << "\n";
         
         assert (0 && "Unreachable");

@@ -760,7 +760,9 @@ namespace ufo
       return exp;
     }
   };
-  
+
+  static Expr simplifyBool (Expr exp);
+
   struct SimplifyBoolExpr
   {
     ExprFactory &efac;
@@ -773,35 +775,43 @@ namespace ufo
       
       if (isOpX<IMPL>(exp))
       {
-        if (isOpX<TRUE>(exp->right()))
-          return mk<TRUE>(efac);
+        Expr lhs = simplifyBool(exp->left());
+        Expr rhs = simplifyBool(exp->right());
+        if (isOpX<TRUE>(rhs)) return mk<TRUE>(efac);
+        if (isOpX<FALSE>(rhs)) return mkNeg(lhs);
+        if (isOpX<TRUE>(lhs)) return rhs;
 
-        if (isOpX<FALSE>(exp->right()))
-          return mk<NEG>(exp->left());
-        
-        return (mk<OR>(
-                 mk<NEG>(exp->left()),
-                 exp->right()));
+        return mk<IMPL>(lhs, rhs);
       }
       
       if (isOpX<OR>(exp)){
-        for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          
-          if (isOpX<TRUE>(*it)) return mk<TRUE>(efac);
-          
-          if (isOpX<EQ>(*it) && (*it)->left() == (*it)->right()) return mk<TRUE>(efac);
-          
+        ExprSet dsjs;
+        ExprSet newDsjs;
+        getConj(exp, dsjs);
+        for (auto & d : dsjs)
+        {
+          if (isOpX<TRUE>(d)) return mk<TRUE>(efac);
+          if (isOpX<EQ>(d) && d->left() == d->right()) return mk<TRUE>(efac);
+          if (!isOpX<FALSE>(d)) newDsjs.insert(d);
         }
+        return disjoin(newDsjs, efac);
       }
       
       if (isOpX<AND>(exp)){
-        for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          
-          if (isOpX<FALSE>(*it)) return mk<FALSE>(efac);
-          
+        ExprSet cnjs;
+        ExprSet newCnjs;
+        getConj(exp, cnjs);
+        for (auto & c : cnjs)
+        {
+          if (isOpX<FALSE>(c)) return mk<FALSE>(efac);
+          if (!isOpX<TRUE>(c)) newCnjs.insert(c);
         }
+        return conjoin(newCnjs, efac);
       }
-      
+
+      if (isOpX<EQ>(exp) && exp->left() == exp->right()) {
+        return mk<TRUE>(efac);
+      }
       return exp;
     }
   };
@@ -993,7 +1003,7 @@ namespace ufo
 
   inline static bool findMatching(Expr pattern, Expr exp, ExprVector& vars, ExprMap& matching)
   {
-    if (pattern == exp && (isOpX<FDECL>(pattern) || (isOpX<MPZ>(pattern))))  return true;
+    if (pattern == exp && (isOpX<FDECL>(pattern) || isOpX<MPZ>(pattern)))  return true;
 
     if (bind::typeOf(pattern) != bind::typeOf(exp)) return false;
 
@@ -1012,6 +1022,7 @@ namespace ufo
         (isOpX<GEQ>(exp) && isOpX<GEQ>(pattern)) ||
         (isOpX<LT>(exp) && isOpX<LT>(pattern)) ||
         (isOpX<GT>(exp) && isOpX<GT>(pattern)) ||
+        (isOpX<STORE>(exp) && isOpX<STORE>(pattern)) ||
         (isOpX<FAPP>(exp) && isOpX<FAPP>(pattern) &&
           pattern->left() == exp->left()))
     {

@@ -550,7 +550,7 @@ namespace ufo
 	{
 	  Z3_sort sort = reinterpret_cast<Z3_sort> (static_cast<Z3_ast> (z));
           Expr domain, range;
-    
+
 	  switch (Z3_get_sort_kind (ctx, sort))
 	    {
 	    case Z3_BOOL_SORT:
@@ -590,7 +590,13 @@ namespace ufo
           return sort::adTy (adt_name);
         }
 	    default:
-	      assert (0 && "Unsupported sort");
+        std::string name = Z3_get_symbol_string(ctx, Z3_get_sort_name(ctx, sort));
+        Expr adt_name = mkTerm<std::string> (name, efac);
+        if (find(adts_seen.begin(), adts_seen.end(), name) == adts_seen.end())
+        {
+          adts_seen.push_back(name);
+        }
+        return sort::adTy (adt_name);
 	    }
 	}
       else if (kind == Z3_VAR_AST)
@@ -815,6 +821,9 @@ namespace ufo
 	  break;
         case Z3_OP_REM:
           e = mknary<REM> (args.begin (), args.end ());
+          break;
+        case Z3_OP_DISTINCT:
+          e = mknary<NEQ> (args.begin(), args.end());
           break;
         case Z3_OP_CONST_ARRAY:
           {
