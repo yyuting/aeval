@@ -2419,7 +2419,16 @@ namespace expr
           return isOpX<FAPP> (e) && e->arity () == 1 && isOpX<FDECL> (fname (e));
         }
       };
-        
+
+      class IsFApp : public std::unary_function<Expr,bool>
+      {
+      public:
+        bool operator () (Expr e)
+        {
+          return isOpX<FAPP> (e) && isOpX<FDECL> (fname (e));
+        }
+      };
+      
         /// returns true if an expression is a variable
       class IsVar : public std::unary_function<Expr,bool>
       {

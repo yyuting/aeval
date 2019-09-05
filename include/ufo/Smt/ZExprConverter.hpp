@@ -76,7 +76,17 @@ namespace ufo
       else if (isOpX<BOOL_TY> (e))
 	res = reinterpret_cast<Z3_ast> (Z3_mk_bool_sort (ctx));
       else if (isOpX<AD_TY> (e))
-  res = reinterpret_cast<Z3_ast> (Z3_mk_int_sort (ctx)); // GF: hack for now
+      {
+        Expr fname = bind::fname (e);
+        std::string sname;
+        if (isOpX<STRING> (fname))
+          sname = getTerm<std::string> (fname);
+        else
+          sname = lexical_cast<std::string> (*fname);
+
+        z3::symbol symname = ctx.str_symbol (sname.c_str ());
+        res = reinterpret_cast<Z3_ast> (Z3_mk_uninterpreted_sort (ctx, symname));
+      }
       else if (isOpX<ARRAY_TY> (e))
       {
         z3::ast _idx_sort (marshal (e->left (), ctx, cache, seen));

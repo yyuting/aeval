@@ -56,6 +56,21 @@ namespace ufo
     return emptyIntersect(a, bv);
   }
 
+  inline static bool hasExtraVars(Expr a, ExprVector& b)
+  {
+    ExprVector av;
+    filter (a, bind::IsConst (), inserter(av, av.begin()));
+    for (auto & v : av) if (find(b.begin(), b.end(), v) == b.end()) return true;
+    return false;
+  }
+
+  inline static bool hasExtraVars(Expr a, Expr b)
+  {
+    ExprVector bv;
+    filter (b, bind::IsConst (), inserter(bv, bv.begin()));
+    return hasExtraVars(a, bv);
+  }
+
   // if at the end disjs is empty, then a == true
   inline static void getConj (Expr a, ExprSet &conjs)
   {
@@ -1107,6 +1122,38 @@ namespace ufo
   {
     RW<ITElifter> rw(new ITElifter());
     return dagVisit (rw, exp);
+  }
+
+  struct SelectStoreRewriter
+  {
+    SelectStoreRewriter () {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<SELECT>(exp) && isOpX<STORE>(exp->left()))
+      {
+        if (exp->right() == exp->left()->right())
+          return exp->left()->last();
+        else
+          return mk<ITE>(mk<EQ>(exp->right(), exp->left()->right()),
+             exp->left()->last(), mk<SELECT>(exp->left()->left(), exp->right()));
+      }
+      else if (isOpX<EQ>(exp) && isOpX<STORE>(exp->left()))
+      {
+        return mk<EQ>(exp->left()->last(), mk<SELECT>(exp->right(), exp->left()->right()));
+      }
+      else if (isOpX<EQ>(exp) && isOpX<STORE>(exp->right()))
+      {
+        return mk<EQ>(exp->right()->last(), mk<SELECT>(exp->left(), exp->right()->right()));
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr rewriteSelectStore(Expr exp)
+  {
+    RW<SelectStoreRewriter> a(new SelectStoreRewriter());
+    return dagVisit (a, exp);
   }
 }
 

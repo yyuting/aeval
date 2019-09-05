@@ -39,7 +39,7 @@
     (=> (and (not (= xs nil)) (R (append (allbutlast xs) (cons (last xs) nil)) m n A))
         (R (allbutlast xs) (+ m 1) n A))))
 
-(assert (and (R xs m n A) (distinct xs nil) (= (last xs) (select A m))))
+(assert (and (R xs m n A) (distinct xs nil)))
 
 (assert (not (R (allbutlast xs) (+ m 1) n A)))
 
