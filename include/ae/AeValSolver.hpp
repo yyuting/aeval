@@ -9,9 +9,9 @@ using namespace std;
 using namespace boost;
 namespace ufo
 {
-  
+
   /** engine to solve validity of \forall-\exists formulas and synthesize Skolem relation */
-  
+
   class AeValSolver {
   private:
 
@@ -214,6 +214,10 @@ namespace ufo
       else if (isOpX<TRUE>(es) || u.implies(mbp, es))
       {
         substs.insert(ineqNegReverter(ef));
+      }
+      else
+      {
+        substs.insert(mk<IMPL>(ineqNegReverter(es), ineqNegReverter(ef)));
       }
     }
 
@@ -469,11 +473,13 @@ namespace ufo
     /**
      * Self explanatory
      */
-    void GetSymbolicMax(ExprSet& vec, Expr& curMax, bool isInt)
+    void getSymbolicMax(ExprSet& vec, Expr& curMax, bool isInt)
     {
+      if (vec.size() == 0) return;
       ExprVector replFrom;
       ExprVector replTo;
       curMax = *vec.begin();
+      if (vec.size() == 1) return;
       for (auto it = vec.begin(); ++it != vec.end(); ){
         auto &a = *it;
         if (u.isEquiv(mk<LT>(curMax, a), mk<TRUE>(efac))){
@@ -499,11 +505,13 @@ namespace ufo
     /**
      * Self explanatory
      */
-    void GetSymbolicMin(ExprSet& vec, Expr& curMin, bool isInt)
+    void getSymbolicMin(ExprSet& vec, Expr& curMin, bool isInt)
     {
+      if (vec.size() == 0) return;
       ExprVector replFrom;
       ExprVector replTo;
       curMin = *vec.begin();
+      if (vec.size() == 1) return;
       for (auto it = vec.begin(); ++it != vec.end(); ){
         auto &a = *it;
         if (u.isEquiv(mk<GT>(curMin, a), mk<TRUE>(efac))){
@@ -526,20 +534,13 @@ namespace ufo
         curMin = replaceAll(curMin, replFrom[i], replTo[i]);
     }
 
-    void GetSymbolicNeq(ExprSet& vec, Expr& lower, Expr& upper, Expr& curNeq, bool strict, bool isInt)
+    void getSymbolicNeq(ExprSet& vec, Expr& lower, Expr& curNeq, Expr eps, bool isInt)
     {
       ExprVector replFrom;
       ExprVector replTo;
 
       Expr var1 = lower;
-      Expr eps;
       Expr eps1;
-      if (isInt)
-        eps = mkTerm (mpz_class (1), efac);
-      else
-        eps = mk<DIV>(mk<MINUS>(upper, lower), mkTerm (mpq_class (vec.size() + 2), efac));
-
-      if (strict) var1 = mk<PLUS>(var1, eps);
 
       string ind = lexical_cast<string> (fresh_var_ind++);
       Expr varName = mkTerm ("_aeval_tmp_neq_" + ind, efac);
@@ -584,7 +585,7 @@ namespace ufo
     /**
      * Return "e + eps"
      */
-    Expr plusEps(Expr e, bool isInt)
+    Expr plusEps(Expr e, bool isInt = true)
     {
       if (isOpX<MPZ>(e) && isInt)
         return mkTerm (mpz_class (boost::lexical_cast<int> (e) + 1), efac);
@@ -596,7 +597,7 @@ namespace ufo
     /**
      * Return "e - eps"
      */
-    Expr minusEps(Expr e, bool isInt)
+    Expr minusEps(Expr e, bool isInt = true)
     {
       if (isOpX<MPZ>(e) && isInt)
         return mkTerm (mpz_class (boost::lexical_cast<int> (e) - 1), efac);
@@ -617,7 +618,6 @@ namespace ufo
           if (var == exp->left()) return exp->right();
           if (var == exp->right()) return exp->left();
         }
-        outs () << "getAssignmentForVar " << *var << " in:\n" << *exp << "\n";
         assert(0);
       }
 
@@ -660,6 +660,66 @@ namespace ufo
         exp = u.numericUnderapprox(exp); // try to see if there are only numerals
         if (isOpX<EQ>(exp)) return exp->right();
 
+        ExprSet cnjs;
+        getConj (exp, cnjs);
+        u.removeRedundantConjuncts(cnjs);
+
+        map<Expr, ExprSet> pre;
+        for (auto & cnj : cnjs)
+        {
+          if (isOpX<IMPL>(cnj)) pre[cnj->left()].insert(cnj->right());
+          else pre[mk<TRUE>(efac)].insert(cnj);
+        }
+
+        // sort keys of pre
+        ExprVector sortedPre;
+        for (auto & a : pre)
+        {
+          if (isOpX<TRUE>(a.first)) continue;
+          int i = 0;
+          while (i < sortedPre.size())
+          {
+            if (a.first != sortedPre[i] && u.implies (sortedPre[i], a.first)) break;
+            i++;
+          }
+          sortedPre.insert(sortedPre.begin()+i, a.first);
+        }
+
+        // enhace the pre keys to avoid conflicts
+        ExprVector preNegged;
+        for (int i = 0; i < sortedPre.size(); i++)
+        {
+          ExprSet negged;
+          negged.insert(sortedPre[i]);
+          for (int j = 0; j < i; j++)
+          {
+            if (u.isSat(conjoin(negged, efac), mkNeg(sortedPre[j])))
+              negged.insert(mkNeg(sortedPre[j]));
+          }
+          preNegged.push_back(conjoin(negged, efac));
+        }
+
+        // create the final ITE
+        Expr sk = compositeAssm(pre[mk<TRUE>(efac)], var, isInt);
+        for (int i = 0; i < sortedPre.size(); i++)
+        {
+          for (auto & b : pre)
+          {
+            if (sortedPre[i] != b.first && u.implies (preNegged[i], b.first))
+            {
+              pre[sortedPre[i]].insert(b.second.begin(), b.second.end());
+            }
+          }
+          sk = mk<ITE>(preNegged[i], compositeAssm(pre[sortedPre[i]], var, isInt), sk);
+        }
+
+        return sk;
+      }
+      return exp;
+    }
+
+    Expr compositeAssm(ExprSet& cnjs, Expr var, bool isInt)
+    {
         bool incomplete = false;
 
         // split constraints
@@ -670,8 +730,7 @@ namespace ufo
         ExprSet conjGE;
         ExprSet conjNEQ;
         ExprSet conjEQ;
-        ExprSet cnjs;
-        getConj (exp, cnjs);
+
         u.removeRedundantConjuncts(cnjs);
 
         for (auto cnj : cnjs)
@@ -728,6 +787,9 @@ namespace ufo
               incomplete = true;
             }
           }
+          else {
+            incomplete = true;
+          }
 
           if (incomplete && debug)
             outs() << "WARNING: This constraint is unsupported: " << *cnj << "\n";
@@ -775,53 +837,54 @@ namespace ufo
 
         // get symbolic max and min
 
-        Expr curMaxGT;
-        if (conjGT.size() > 1){
-          GetSymbolicMax(conjGT, curMaxGT, isInt);
-        } else if (conjGT.size() == 1){
-          curMaxGT = *(conjGT.begin());
+        Expr curMaxGT, curMaxGE, curMinLT, curMinLE, curMax, curMin;
+        getSymbolicMax(conjGT, curMaxGT, isInt);
+        getSymbolicMax(conjGE, curMaxGE, isInt);
+        getSymbolicMin(conjLT, curMinLT, isInt);
+        getSymbolicMin(conjLE, curMinLE, isInt);
+
+        if (isInt)
+        {
+          if (curMaxGT != NULL || curMaxGE != NULL)
+          {
+            if (curMaxGE == NULL) curMax = plusEps(curMaxGT);
+            else if (curMaxGT == NULL) curMax = curMaxGE;
+            else curMax = mk<ITE>(mk<GEQ>(curMaxGT, curMaxGE), plusEps(curMaxGT), curMaxGE);
+          }
+
+          if (curMinLT != NULL || curMinLE != NULL)
+          {
+            if (curMinLE == NULL) curMin = minusEps(curMinLT);
+            else if (curMinLT == NULL) curMin = curMinLE;
+            else curMin = mk<ITE>(mk<LEQ>(curMinLT, curMinLE), minusEps(curMinLT), curMinLE);
+          }
         }
+        else
+        {
+          if (curMaxGT != NULL || curMaxGE != NULL)
+          {
+            if (curMaxGE == NULL) curMax = curMaxGT;
+            else if (curMaxGT == NULL) curMax = curMaxGE;
+            else curMax = mk<ITE>(mk<GEQ>(curMaxGT, curMaxGE), curMaxGT, curMaxGE);
+          }
 
-        Expr curMaxGE;
-        if (conjGE.size() > 1){
-          GetSymbolicMax(conjGE, curMaxGE, isInt);
-        } else if (conjGE.size() == 1){
-          curMaxGE = *(conjGE.begin());
+          if (curMinLT != NULL || curMinLE != NULL)
+          {
+            if (curMinLE == NULL) curMin = curMinLT;
+            else if (curMinLT == NULL) curMin = curMinLE;
+            else curMin = mk<ITE>(mk<LEQ>(curMinLT, curMinLE), curMinLT, curMinLE);
+          }
         }
-
-        Expr curMinLT;
-        if (conjLT.size() > 1){
-          GetSymbolicMin(conjLT, curMinLT, isInt);
-        } else if (conjLT.size() == 1){
-          curMinLT = *(conjLT.begin());
-        }
-
-        Expr curMinLE;
-        if (conjLE.size() > 1){
-          GetSymbolicMin(conjLE, curMinLE, isInt);
-        } else if (conjLE.size() == 1){
-          curMinLE = *(conjLE.begin());
-        }
-
-        // get value in the middle of max and min
-
-        Expr curMax;
-        Expr curMin;
-
-        if (curMaxGT != NULL && curMaxGE != NULL){
-          curMax = mk<ITE>(mk<GT>(curMaxGT, curMaxGE), curMaxGT, curMaxGE);
-        }
-        else if (curMaxGT != NULL) curMax = curMaxGT;
-        else curMax = curMaxGE;
-
-        if (curMinLT != NULL && curMinLE != NULL){
-          curMin = mk<ITE>(mk<LT>(curMinLT, curMinLE), curMinLT, curMinLE);
-        }
-        else if (curMinLT != NULL) curMin = curMinLT;
-        else curMin = curMinLE;
 
         if (conjNEQ.size() == 0)
         {
+          if (isInt)
+          {
+            if (curMax != NULL) return curMax;
+            if (curMin != NULL) return curMin;
+            assert (0);
+          }
+
           if (curMinLT == NULL && curMinLE != NULL)
           {
             return curMinLE;
@@ -832,106 +895,27 @@ namespace ufo
             return curMaxGE;
           }
 
-          if (curMinLT != NULL && curMinLE == NULL && curMaxGT == NULL && curMaxGE == NULL)
-          {
-            return minusEps(curMinLT, isInt);
-          }
-
-          if (curMinLT == NULL && curMinLE == NULL && curMaxGT != NULL && curMaxGE == NULL)
+          if (curMin == NULL)
           {
             return plusEps(curMaxGT, isInt);
           }
 
-          if (curMinLT != NULL && curMinLE != NULL && curMaxGT == NULL && curMaxGE == NULL)
+          if (curMax == NULL)
           {
             return minusEps(curMin, isInt);
           }
 
-          if (curMinLT == NULL && curMinLE == NULL && curMaxGT != NULL && curMaxGE != NULL)
-          {
-            return plusEps(curMax, isInt);
-          }
-
-          if (curMinLT != NULL && curMinLE == NULL && curMaxGT != NULL && curMaxGE == NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMinLT, curMaxGT), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMinLT, curMaxGT), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT == NULL && curMinLE != NULL && curMaxGT == NULL && curMaxGE != NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMinLE, curMaxGE), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMinLE, curMaxGE), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT == NULL && curMinLE != NULL && curMaxGT != NULL && curMaxGE == NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMinLE, curMaxGT), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMinLE, curMaxGT), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT != NULL && curMinLE == NULL && curMaxGT == NULL && curMaxGE != NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMinLT, curMaxGE), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMinLT, curMaxGE), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT != NULL && curMinLE == NULL && curMaxGT != NULL && curMaxGE != NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMinLT, curMax), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMinLT, curMax), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT == NULL && curMinLE != NULL && curMaxGT != NULL && curMaxGE != NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMinLE, curMax), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMinLE, curMax), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT != NULL && curMinLE != NULL && curMaxGT == NULL && curMaxGE != NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMin, curMaxGE), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMin, curMaxGE), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT != NULL && curMinLE != NULL && curMaxGT != NULL && curMaxGE == NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMin, curMaxGT), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMin, curMaxGT), mkTerm (mpq_class (2), efac));
-          }
-
-          if (curMinLT != NULL && curMinLE != NULL && curMaxGT != NULL && curMaxGE != NULL)
-          {
-            if (isInt)
-              return mk<IDIV>(mk<PLUS>(curMin, curMax), mkTerm (mpz_class (2), efac));
-            else
-              return mk<DIV>(mk<PLUS>(curMin, curMax), mkTerm (mpq_class (2), efac));
-          }
-          assert(0);
+          // get value in the middle of max and min
+          assert (curMin != NULL && curMax != NULL);
+          return mk<DIV>(mk<PLUS>(curMin, curMax), mkTerm (mpq_class (2), efac));
         }
 
         // here conjNEQ.size() > 0
 
         Expr tmpMin;
-        GetSymbolicMin(conjNEQ, tmpMin, isInt);
+        getSymbolicMin(conjNEQ, tmpMin, isInt);
         Expr tmpMax;
-        GetSymbolicMax(conjNEQ, tmpMax, isInt);
+        getSymbolicMax(conjNEQ, tmpMax, isInt);
 
         if (curMinLE == NULL && curMinLT == NULL && curMaxGE == NULL && curMaxGT == NULL)
         {
@@ -971,18 +955,25 @@ namespace ufo
         assert (curMinLE != NULL || curMinLT != NULL);
         assert (curMaxGE != NULL || curMaxGT != NULL);
 
-        if (curMaxGE == NULL) curMax = curMaxGT;
-        else curMax = curMaxGE;
+        Expr eps;
+        if (isInt)
+        {
+          eps = mkTerm (mpz_class (1), efac);
 
-        if (curMinLE == NULL) curMin = curMinLT;
-        else curMin = curMinLE;
+          if (curMaxGE == NULL) curMax = mk<PLUS>(curMaxGT, eps);
+          else if (curMaxGT == NULL) curMax = curMaxGE;
+          else curMax = mk<ITE>(mk<GEQ>(curMaxGT, curMaxGE), mk<PLUS>(curMaxGT, eps), curMaxGE);
+        }
+        else
+        {
+          eps = mk<DIV>(mk<MINUS>(curMin, curMax), mkTerm (mpq_class (conjNEQ.size() + 2), efac));
+          curMax = mk<PLUS>(curMax, eps);
+        }
 
         Expr curMid;
-        GetSymbolicNeq(conjNEQ, curMax, curMin, curMid, (curMaxGE == NULL), isInt);
+        getSymbolicNeq(conjNEQ, curMax, curMid, eps, isInt); // linear scan
         return curMid;
       }
-      return exp;
-    }
 
     void searchDownwards(set<int> &indexes, Expr var, ExprVector& skol)
     {
@@ -1144,12 +1135,47 @@ namespace ufo
       return conjoin(skolTmp, efac);
     }
 
+    bool propagateMap(Expr var, int i)
+    {
+      if (skolMaps[i][var] != NULL && defMap[var] != NULL)
+      {
+        ExprSet vars;
+        filter (defMap[var], bind::IsConst (), inserter (vars, vars.begin()));
+        if (vars.size() != 1) return false; //GF: to extend
+        for (auto & var1 : vars)
+        {
+          Expr tmp = skolMaps[i][var];
+          if (find(v.begin(), v.end(), var1) != v.end() && skolMaps[i][var1] == NULL)
+          {
+            skolMaps[i][var1] = simplifyArithm(replaceAll(tmp, var, defMap[var]));;
+            skolMaps[i][var] = NULL;
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
     Expr getSkolemFunction (bool compact = false)
     {
       ExprSet skolUncond;
       ExprSet eligibleVars;
-
       skolemConstraints.clear(); // GF: just in case
+
+      bool toRestart = true;
+      while(toRestart)
+      {
+        for (auto &var: v)
+        {
+          toRestart = false;
+          for (int i = 0; i < partitioning_size; i++)
+          {
+            toRestart |= propagateMap(var, i);
+          }
+          if (toRestart) break;
+        }
+      }
+
       for (auto &var: v)
       {
         bool elig = compact;
@@ -1316,10 +1342,7 @@ namespace ufo
 
         skolUncond.insert(bigSkol);
       }
-
-      skol = conjoin(skolUncond, efac);
-      if (debug) outs () << "Sanity check: " << u.implies(mk<AND>(s, skol), t) << "\n";
-      return skol;
+      return conjoin(skolUncond, efac);
     }
 
     Expr getSeparateSkol (Expr v) { return separateSkols [v]; }
@@ -1352,6 +1375,17 @@ namespace ufo
     s = convertIntsToReals<DIV>(s);
     t = convertIntsToReals<DIV>(t);
 
+    Expr t_orig = t;
+
+    // formula simplification
+    t = simplifyBool(t);
+    ExprSet cnjs;
+    ExprVector empt;
+    getConj(t, cnjs);
+    simplBoolReplCnj(empt, cnjs);
+    t = conjoin(cnjs, t->getFactory());
+    t = simplifyBool(t);
+
     if (debug)
     {
       outs() << "S: " << *s << "\n";
@@ -1379,12 +1413,13 @@ namespace ufo
           for (auto & evar : t_quantified) sepSkols.push_back(mk<EQ>(evar, ae.getSeparateSkol(evar)));
           u.serialize_formula(sepSkols);
           if (debug) outs () << "Sanity check [split]: " <<
-            u.implies(mk<AND>(s, conjoin(sepSkols, s->getFactory())), t) << "\n";
+            u.implies(mk<AND>(s, conjoin(sepSkols, s->getFactory())), t_orig) << "\n";
         }
         else
         {
           outs() << "\nextracted skolem:\n";
           u.serialize_formula(skol);
+          if (debug) outs () << "Sanity check: " << u.implies(mk<AND>(s, skol), t_orig) << "\n";
         }
       }
     }
@@ -1392,6 +1427,7 @@ namespace ufo
 
   inline void getAllInclusiveSkolem(Expr s, Expr t, bool debug, bool compact)
   {
+    // GF: seems to be broken
     ExprSet s_vars;
     ExprSet t_vars;
 

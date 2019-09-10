@@ -669,15 +669,15 @@ namespace ufo
 
         if (isOpX<PLUS>(b)){
           Expr res = simplifiedPlus(b, a);
-          return mk<UN_MINUS>(res);
+          return additiveInverse(res);
         } else
           
           if (isOpX<MINUS>(a)){
-            if (a->left() == b) ret = mk<UN_MINUS>(a->right());
+            if (a->left() == b) ret = additiveInverse(a->right());
           } else
             
             if (isOpX<MINUS>(b)){
-              if (a == b->right()) ret = mk<UN_MINUS>(b->left());
+              if (a == b->right()) ret = additiveInverse(b->left());
             } else
               
               if (isOpX<UN_MINUS>(b)) {
@@ -701,7 +701,7 @@ namespace ufo
                         ret = b->left();
                       }
                       else {
-                        ret = mk<UN_MINUS>(b);
+                        ret = additiveInverse(b);
                       }
                     }
 
@@ -721,7 +721,7 @@ namespace ufo
     {
       zero = mkTerm (mpz_class (0), efac);
       one = mkTerm (mpz_class (1), efac);
-      minus_one = mkTerm (mpz_class (1), efac);
+      minus_one = mkTerm (mpz_class (-1), efac);
     };
 
     Expr operator() (Expr exp)
@@ -742,8 +742,8 @@ namespace ufo
         if (exp->right() == zero) return zero;
         if (exp->left() == one) return exp->right();
         if (exp->right() == one) return exp->left();
-        if (exp->left() == minus_one) return mk<UN_MINUS>(exp->right());
-        if (exp->right() == minus_one) return mk<UN_MINUS>(exp->left());
+        if (exp->left() == minus_one) return additiveInverse(exp->right());
+        if (exp->right() == minus_one) return additiveInverse(exp->left());
       }
 
       if (isOpX<UN_MINUS>(exp))
@@ -801,6 +801,7 @@ namespace ufo
       if (isOpX<IMPL>(exp)){
         if (isOpX<TRUE>(exp->left())) return exp->right();
         if (isOpX<FALSE>(exp->left())) return mk<TRUE>(exp->getFactory());
+        return mk<OR>(mkNeg(exp->left()), exp->right());
       }
 
       if (isOpX<ITE>(exp)){
@@ -837,6 +838,143 @@ namespace ufo
   {
     RW<SimplifyBoolExpr> rw(new SimplifyBoolExpr(exp->getFactory()));
     return dagVisit (rw, exp);
+  }
+
+  inline static void simplBoolReplCnjHlp(ExprVector& hardVars, ExprSet& cnjs, ExprVector& facts, ExprVector& repls)
+  {
+    bool toRestart;
+    ExprSet toInsert;
+
+    for (auto it = cnjs.begin(); it != cnjs.end(); )
+    {
+      if (isOpX<TRUE>(*it))
+      {
+        it = cnjs.erase(it);
+        continue;
+      }
+
+      if (isOpX<NEG>(*it))
+      {
+        Expr negged = mkNeg((*it)->left());
+        it = cnjs.erase(it);
+        cnjs.insert(negged);
+        continue;
+      }
+
+      Expr a = replaceAll(*it, facts, repls);
+
+      if (isOpX<IMPL>(a))
+      {
+        Expr lhs = simplifyBool(a->left());
+        bool isTrue = isOpX<TRUE>(lhs);
+        bool isFalse = isOpX<FALSE>(lhs);
+
+        if (isTrue) a = simplifyBool(a->right());
+        else if (isFalse) continue;
+      }
+
+      if (isOpX<EQ>(a))
+      {
+        // TODO: this could be symmetric
+
+        Expr lhs = simplifyBool(a->left());
+        bool isTrue = isOpX<TRUE>(lhs);
+        bool isFalse = isOpX<FALSE>(lhs);
+
+        if (isTrue) a = simplifyBool(a->right());
+        else if (isFalse)
+        {
+          a = simplifyBool(mk<NEG>(a->right()));
+        }
+      }
+
+      ExprSet splitted;
+      getConj(a, splitted);
+      toRestart = false;
+
+      for (auto & c : splitted)
+      {
+        if (bind::isBoolConst(c))
+        {
+          bool nothard = find(hardVars.begin(), hardVars.end(), c) == hardVars.end();
+          if (nothard)
+          {
+            toRestart = true;
+            facts.push_back(c);
+            repls.push_back(mk<TRUE>(a->getFactory()));
+            facts.push_back(mk<NEG>(c));
+            repls.push_back(mk<FALSE>(a->getFactory()));
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else if (isOpX<NEG>(c) && bind::isBoolConst(c->left()))
+        {
+          bool nothardLeft = find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end();
+          if (nothardLeft)
+          {
+            toRestart = true;
+            facts.push_back(c);
+            repls.push_back(mk<TRUE>(a->getFactory()));
+            facts.push_back(c->left());
+            repls.push_back(mk<FALSE>(a->getFactory()));
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else if (isOpX<EQ>(c))
+        {
+          if (bind::isIntConst(c->left())  &&
+              find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end())
+          {
+            toRestart = true;
+            facts.push_back(c->left());
+            repls.push_back(c->right());
+          }
+          else if (bind::isIntConst(c->right())  &&
+                   find(hardVars.begin(), hardVars.end(), c->right()) == hardVars.end())
+          {
+            toRestart = true;
+            facts.push_back(c->right());
+            repls.push_back(c->left());
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else
+        {
+          toInsert.insert(c);
+        }
+      }
+
+      it = cnjs.erase(it);
+      if (toRestart) break;
+    }
+
+    cnjs.insert(toInsert.begin(), toInsert.end());
+    if (toRestart)
+    {
+      simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
+    }
+  }
+
+  // simplification based on boolean replacements
+  inline static void simplBoolReplCnj(ExprVector& hardVars, ExprSet& cnjs)
+  {
+    ExprVector facts;
+    ExprVector repls;
+
+    simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
+
+    for (int i = 0; i < facts.size() ; i++)
+      if (!isOpX<NEG>(facts[i]))
+        cnjs.insert(mk<EQ>(facts[i], repls[i]));
   }
 
   template <typename T> static Expr convertIntsToReals (Expr exp);
@@ -957,6 +1095,13 @@ namespace ufo
              bind::isIntConst(a) || bind::isRealConst(a));
   }
 
+  bool isBoolean(Expr a)
+  {
+    if (isOpX<ITE>(a)) return isBoolean(a->last());
+    return (isOpX<AND>(a) || isOpX<OR>(a) || isOpX<IMPL>(a) || isOpX<NEG>(a) || isOpX<IFF>(a) ||
+            isOp<ComparissonOp>(a) || bind::isBoolConst(a));
+  }
+
   Expr projectITE(Expr ite, Expr var)
   {
     if (isOpX<ITE>(ite))
@@ -986,7 +1131,7 @@ namespace ufo
 
     VisitAction operator() (Expr exp)
     {
-      if (isOpX<EQ>(exp) && (contains(exp, var)) &&
+      if (isOpX<EQ>(exp) && (contains(exp, var)) && exp->right() != exp->left() &&
           isNumeric(exp->left()) && isNumeric(exp->right()))
       {
         eqs.insert(ineqMover(exp, var));
@@ -1027,7 +1172,6 @@ namespace ufo
       dagVisit (trm, exp);
     }
   }
-
 }
 
 #endif
