@@ -2406,8 +2406,16 @@ namespace expr
           return isOpX<MPZ> (e);
         }
       };
-      
-      
+
+      class IsFApp : public std::unary_function<Expr,bool>
+      {
+      public:
+        bool operator () (Expr e)
+        {
+          return isOpX<FAPP> (e) && isOpX<FDECL> (fname (e));
+        }
+      };
+
       /// returns true if an expression is a constant
       class IsConst : public std::unary_function<Expr,bool>
       {
@@ -2738,6 +2746,18 @@ namespace expr
       }
     };
 
+    struct RAVALLM: public std::unary_function<Expr,VisitAction>
+    {
+      ExprMap& m;
+
+      RAVALLM (ExprMap& _m) : m(_m) { }
+      VisitAction operator() (Expr exp) const
+      {
+        if (m[exp] != NULL) return VisitAction::changeTo (m[exp]);
+        return VisitAction::doKids ();
+      }
+    };
+
     struct RAVSIMP: public std::unary_function<Expr,VisitAction>
     {
       Expr s;
@@ -2946,6 +2966,13 @@ namespace expr
   {
     assert(s.size() == t.size());
     RAVALL rav(&s, &t);
+    return dagVisit (rav, exp);
+  }
+
+  // pairwise replacing
+  inline Expr replaceAll (Expr exp, ExprMap& m)
+  {
+    RAVALLM rav(m);
     return dagVisit (rav, exp);
   }
 
