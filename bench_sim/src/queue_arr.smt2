@@ -1,6 +1,7 @@
 (declare-sort Elem)
 
 (declare-fun in () Elem)
+(declare-fun out () Elem)
 (declare-fun m () Int)
 (declare-fun n () Int)
 (declare-fun m1 () Int)
@@ -27,4 +28,5 @@
     (< m n)
     (= m1 (+ m 1))
     (= n1 n)
-    (= A1 A)))
+    (= A1 A)
+    (= out (select A m))))
