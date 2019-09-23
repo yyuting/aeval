@@ -1,6 +1,7 @@
 (declare-sort Elem)
 
 (declare-fun in () Elem)
+(declare-fun out () Elem)
 (declare-fun n () Int)
 (declare-fun n1 () Int)
 (declare-fun A () (Array Int Elem))
@@ -23,5 +24,6 @@
   (and
     (> n 0)
     (= n1 (- n 1))
-    (= A1 A)))
+    (= A1 A)
+    (= out (select A (- n 1)))))
 
