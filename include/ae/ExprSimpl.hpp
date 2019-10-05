@@ -78,6 +78,16 @@ namespace ufo
     return mk<MULT>(mkTerm (mpz_class (coef), var->getFactory()), var);
   }
 
+  inline static int isMultVar(Expr e, Expr var){
+    if (e == var) return 1;
+    if (!isOpX<MULT>(e)) return 0;
+    if (isOpX<MPZ>(e->right()) && var == e->left()) return lexical_cast<int>(e->right());
+    if (isOpX<MPZ>(e->left()) && var == e->right()) return lexical_cast<int>(e->left());
+    if (isOpX<MPQ>(e->right()) && var == e->left()) return lexical_cast<int>(e->right());
+    if (isOpX<MPQ>(e->left()) && var == e->right()) return lexical_cast<int>(e->left());
+    return 0;
+  }
+
   /**
    * Self explanatory
    */

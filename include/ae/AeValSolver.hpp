@@ -735,8 +735,33 @@ namespace ufo
 
         for (auto cnj : cnjs)
         {
+          // preprocessing starts
           if (isOpX<NEG>(cnj)) cnj = mkNeg(cnj->left());
           cnj = ineqReverter(ineqMover(cnj, var));
+          int c = isMultVar(cnj->left(), var);
+          if (c == 1 && !isInt)
+            cnj = reBuildCmp(cnj, var, cnj->right());
+          if (c == -1 && !isInt)
+            cnj = reBuildCmp(cnj, cnj->right(), var);
+          if (c > 1 && !isInt)
+            cnj = reBuildCmp(cnj, var, mk<DIV>(cnj->right(),
+                    mkTerm (mpq_class (c), efac)));
+          if (c < 0 && !isInt)
+            cnj = reBuildCmp(cnj, mk<DIV>(cnj->right(),
+                    mkTerm (mpq_class (-c), efac)), var);
+          c = isMultVar(cnj->right(), var);
+          if (c == 1 && !isInt)
+            cnj = reBuildCmp(cnj, cnj->left(), var);
+          if (c == -1 && !isInt)
+            cnj = reBuildCmp(cnj, var, cnj->left());
+          if (c > 1 && !isInt)
+            cnj = reBuildCmp(cnj, mk<DIV>(cnj->left(),
+                    mkTerm (mpq_class (c), efac)), var);
+          if (c < 0 && !isInt)
+            cnj = reBuildCmp(cnj, var, mk<DIV>(cnj->left(),
+                    mkTerm (mpq_class (-c), efac)));
+          // preprocessing ends
+
           if (isOpX<EQ>(cnj)){
             if (var == cnj->left()) {
               conjEQ.insert(cnj->right());
