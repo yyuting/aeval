@@ -275,15 +275,100 @@ namespace ufo
       return exp;
     }
 
+    inline static string varType (Expr var)
+    {
+      if (bind::isIntConst(var))
+      return "Int";
+      else if (bind::isRealConst(var))
+      return "Real";
+      else if (bind::isBoolConst(var))
+      return "Bool";
+      else if (bind::isConst<ARRAY_TY> (var))
+      return "(Array Int Int)";
+      else return "";
+    }
+
+    void print (Expr e)
+    {
+      if (isOpX<FORALL>(e) || isOpX<EXISTS>(e))
+      {
+        if (isOpX<FORALL>(e)) outs () << "(forall (";
+        else outs () << "(exists (";
+
+        for (int i = 0; i < e->arity() - 1; i++)
+        {
+          Expr var = bind::fapp(e->arg(i));
+          outs () << "(" << *var << " " << varType(var) << ") ";
+        }
+        outs () << "\b) ";
+        print (e->last());
+        outs () << ")";
+      }
+      else if (isOpX<AND>(e))
+      {
+        outs () << "(and ";
+        ExprSet cnjs;
+        getConj(e, cnjs);
+        for (auto & c : cnjs)
+        {
+          print(c);
+          outs () << " ";
+        }
+        outs () << "\b)";
+      }
+      else if (isOpX<OR>(e))
+      {
+        outs () << "(or ";
+        ExprSet dsjs;
+        getDisj(e, dsjs);
+        for (auto & d : dsjs)
+        {
+          print(d);
+          outs () << " ";
+        }
+        outs () << "\b)";
+      }
+      else if (isOpX<IMPL>(e) || isOp<ComparissonOp>(e))
+      {
+        if (isOpX<IMPL>(e)) outs () << "(=> ";
+        if (isOpX<EQ>(e)) outs () << "(= ";
+        if (isOpX<GEQ>(e)) outs () << "(>= ";
+        if (isOpX<LEQ>(e)) outs () << "(<= ";
+        if (isOpX<LT>(e)) outs () << "(< ";
+        if (isOpX<GT>(e)) outs () << "(> ";
+        if (isOpX<NEQ>(e)) outs () << "(distinct ";
+        print(e->left());
+        outs () << " ";
+        print(e->right());
+        outs () << ")";
+      }
+      else if (isOpX<ITE>(e))
+      {
+        outs () << "(ite ";
+        print(e->left());
+        outs () << " ";
+        print(e->right());
+        outs () << " ";
+        print(e->last());
+        outs () << ")";
+      }
+      else outs () << z3.toSmtLib (e);
+    }
+
     void serialize_formula(Expr form)
     {
-      smt.reset();
-      smt.assertExpr(form);
-      smt.toSmtLib (outs());
-      outs().flush ();
+      outs () << "(assert ";
+      print (form);
+      outs () << ")\n";
+
+      // old version (to  merge, maybe?)
+//      smt.reset();
+//      smt.assertExpr(form);
+//      smt.toSmtLib (outs());
+//      outs().flush ();
     }
   };
-  
+
   /**
    * Horn-based interpolation over particular vars
    */

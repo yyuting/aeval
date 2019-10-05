@@ -8,8 +8,8 @@
 
 (assert (forall ((x Int) (y Int) (z Int) (r Int))
   (= (G x y z r) (or
-    (Dplus (+ x y) z r)
-    (exists ((s1 Int) (s2 Int)) (and (Plus x z s1) (Plus y z s2) (= (+ r z) (+ s1 s2))))))))
+    (Dplus (- (* 4 x) (* 3 y)) z r)
+    (exists ((s1 Int) (s2 Int)) (and (Plus x z s1) (Plus y z s2) (= r (- (* 4 s1) (* 3 s2)))))))))
 
 (assert (and nu (forall ((x Int) (y Int) (r Int))
   (= (Dplus x y r) (and

@@ -50,6 +50,7 @@ namespace ufo
     ExprVector cnjs;
     getConj(s, cnjs);
 
+    Expr flaMain;
     Expr flaRel;
     Expr fla;
     Expr flaForall;
@@ -63,7 +64,11 @@ namespace ufo
       if (isOpX<FORALL>(c))
       {
         c = regularizeQF(c);
-        if (isOpX<FAPP>(c->last())) flaRel = c->last();
+        if (isOpX<FAPP>(c->last()))
+        {
+          flaMain = c;
+          flaRel = c->last();
+        }
         if (isOpX<EQ>(c->last()))
         {
           flaForall = c;
@@ -111,7 +116,7 @@ namespace ufo
 
     fla = expandExists(fla);
     fla = simplifyExists(fla);
-    
+
     // creating abstraction
 
     ExprSet dsj;
@@ -137,7 +142,6 @@ namespace ufo
     }
 
     fla = disjoin(newDisj, efac);
-
     // finding matching
 
     ExprSet flaOrigDisj;
@@ -190,16 +194,55 @@ namespace ufo
     }
 
     // validate exist
-    if (!matching.empty() && ex1 != NULL && ex2 != NULL && existEqual(replaceAll(ex1, matching), ex2))
+    if (!matching.empty() && ex1 != NULL && ex2 != NULL)
     {
-      Expr upd = replaceAll(flaRel, matching);
-      newDisj.erase(ex2);
-      newDisj.erase(used);
-      newDisj.insert(upd);
-      fla = replaceAll(flaForall, flaForall->last(), mk<EQ>(flaOrig->left(), disjoin(newDisj, efac)));
-      if (usedNu) fla = mk<AND>(nuVar, fla);
-        else fla = mk<AND>(muVar, fla);
-      u.serialize_formula(fla);
+      ex1 = replaceAll(ex1, matching);
+
+      ExprSet cnjs1, cnjs2;
+      getConj(ex1->last(), cnjs1);
+      getConj(ex2->last(), cnjs2);
+
+      ExprVector av;
+      for (unsigned i = 0; i < ex1->arity() - 1; i++)
+        av.push_back(bind::fapp(ex1->arg(i)));
+
+      ExprMap newMatch;
+      for (auto it1 = cnjs1.begin(); it1 != cnjs1.end(); )
+      {
+        bool doBreak = false;
+        for (auto it2 = cnjs2.begin(); it2 != cnjs2.end(); )
+        {
+          ExprMap m1 = newMatch; //matching;
+          if (findMatchingSubexpr (*it1, *it2, av, m1))
+          {
+            newMatch = m1;
+            it1 = cnjs1.erase(it1);
+            it2 = cnjs2.erase(it2);
+            doBreak = true;
+            break;
+          }
+          else ++it2;
+        }
+        if (!doBreak) ++it1;
+      }
+
+      Expr whatsLeft = replaceAll(conjoin(cnjs1, efac), newMatch);
+      if (u.isEquiv(whatsLeft, conjoin(cnjs2, efac)))
+      {
+        Expr upd = replaceAll(flaRel, matching);
+        newDisj.erase(ex2);
+        newDisj.erase(used);
+        newDisj.insert(upd);
+
+        fla = replaceAll(flaForall, flaForall->last(), mk<EQ>(flaOrig->left(), disjoin(newDisj, efac)));
+        if (usedNu) fla = mk<AND>(nuVar, fla);
+          else fla = mk<AND>(muVar, fla);
+
+        // serialize everything:
+        // outs () << "(declare-fun mu () Bool)\n(declare-fun nu () Bool)\n";
+        u.serialize_formula(flaMain);
+        u.serialize_formula(simplifyArithm(fla));
+      }
     }
   };
 }

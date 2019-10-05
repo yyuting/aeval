@@ -90,6 +90,17 @@ namespace ufo
     }
   }
 
+  inline static void getPlusOps (Expr a, ExprVector &plsOps)
+  {
+    if (isOpX<PLUS>(a)){
+      for (unsigned i = 0; i < a->arity(); i++){
+        getPlusOps(a->arg(i), plsOps);
+      }
+    } else {
+      plsOps.push_back(a);
+    }
+  }
+
   inline static Expr reBuildNegCmp(Expr term, Expr lhs, Expr rhs)
   {
     if (isOpX<EQ>(term))
@@ -652,6 +663,25 @@ namespace ufo
     return simplifyBool(disjoin (newer, exp->getFactory()));
   }
 
+  inline static Expr simplifyPlus (Expr exp){
+    ExprVector plsOps;
+    getPlusOps (exp, plsOps);
+    // GF: to extend
+    int c = 0;
+    for (auto it = plsOps.begin(); it != plsOps.end(); )
+    {
+      if (isOpX<MPZ>(*it))
+      {
+        c += lexical_cast<int>(*it);
+        it = plsOps.erase(it);
+        continue;
+      }
+      else ++it;
+    }
+    if (c != 0) plsOps.push_back(mkTerm (mpz_class (c), exp->getFactory()));
+    return mkplus(plsOps, exp->getFactory());
+  }
+
   inline static Expr simplifiedPlus (Expr exp, Expr to_skip){
     ExprVector args;
     Expr ret;
@@ -738,15 +768,15 @@ namespace ufo
     
     return ret;
   }
-  
+
   struct SimplifyArithmExpr
   {
     ExprFactory &efac;
-    
+
     Expr zero;
     Expr one;
     Expr minus_one;
-    
+
     SimplifyArithmExpr (ExprFactory& _efac):
     efac(_efac)
     {
@@ -754,19 +784,19 @@ namespace ufo
       one = mkTerm (mpz_class (1), efac);
       minus_one = mkTerm (mpz_class (1), efac);
     };
-    
+
     Expr operator() (Expr exp)
     {
       if (isOpX<PLUS>(exp))
       {
-        return simplifiedPlus(exp, zero);
+        return simplifyPlus(exp);
       }
-      
-      if (isOpX<MINUS>(exp) && exp->arity() == 2)
-      {
-        return simplifiedMinus(exp->left(), exp->right());
-      }
-      
+
+//      if (isOpX<MINUS>(exp) && exp->arity() == 2)
+//      {
+//        return simplifiedMinus(exp->left(), exp->right());
+//      }
+
       if (isOpX<MULT>(exp))
       {
         if (exp->left() == zero) return zero;
@@ -776,7 +806,7 @@ namespace ufo
         if (exp->left() == minus_one) return mk<UN_MINUS>(exp->right());
         if (exp->right() == minus_one) return mk<UN_MINUS>(exp->left());
       }
-      
+
       if (isOpX<UN_MINUS>(exp))
       {
         Expr uneg = exp->left();
@@ -790,7 +820,7 @@ namespace ufo
           if (isOpX<UN_MINUS>(unegr)) return mk<MINUS>(unegr->left(), unegl);
         }
       }
-      
+
       if (isOpX<MINUS>(exp))
       {
         if (isOpX<UN_MINUS>(exp->right())) return mk<PLUS>(exp->left(), exp->right()->left());
@@ -894,9 +924,11 @@ namespace ufo
         {
           if (isOpX<EQ>(c))
           {
-            if (isOpX<MPZ>(c->right()) && find (args.begin(), args.end(), c->left()) != args.end())
+            if (find (args.begin(), args.end(), c->right()) == args.end() &&
+                find (args.begin(), args.end(), c->left()) != args.end())
               qFree = replaceAll(qFree, c->left(), c->right());
-            if (isOpX<MPZ>(c->left()) && find (args.begin(), args.end(), c->right()) != args.end())
+            if (find (args.begin(), args.end(), c->left()) == args.end() &&
+                find (args.begin(), args.end(), c->right()) != args.end())
               qFree = replaceAll(qFree, c->right(), c->left());
           }
         }
@@ -957,51 +989,6 @@ namespace ufo
   {
     RW<SimplifyExists> rw(new SimplifyExists(exp->getFactory()));
     return dagVisit (rw, exp);
-  }
-
-  bool existEqual (Expr a, Expr b)
-  {
-    if (isOpX<EXISTS>(a) && isOpX<EXISTS>(b))
-    {
-      if (a->arity() != b->arity()) return false;
-
-      ExprVector e1;
-      ExprVector e2;
-
-      for (int i = 0; i < a->arity() - 1; i++)
-      {
-        e1.push_back(bind::fapp(a->arg(i)));
-        e2.push_back(bind::fapp(b->arg(i)));
-      }
-
-      Expr a1 = a->last();
-      Expr b1 = b->last();
-
-      if ((isOpX<EQ>(a1) && isOpX<EQ>(b1)) ||
-          (isOpX<LEQ>(a1) && isOpX<LEQ>(b1)) ||
-          (isOpX<GEQ>(a1) && isOpX<GEQ>(b1)) ||
-          (isOpX<LT>(a1) && isOpX<LT>(b1)) ||
-          (isOpX<GT>(a1) && isOpX<GT>(b1)) ||
-          (isOpX<PLUS>(a1) && isOpX<PLUS>(b1)) ||
-          (isOpX<MINUS>(a1) && isOpX<MINUS>(b1)) ||
-          (isOpX<MULT>(a1) && isOpX<MULT>(b1)) ||
-          (isOpX<NEG>(a1) && isOpX<NEG>(b1)) ||
-          (isOpX<STORE>(a1) && isOpX<STORE>(b1)) ||
-          (isOpX<AND>(a1) && isOpX<AND>(b1)) ||
-          (isOpX<FAPP>(a1) && isOpX<FAPP>(b1) && a1->left() == b1->left()))
-      {
-        for (int i = 0; i < b1->arity(); i++)
-        {
-          if (emptyIntersect(a1->arg(i), e1) && emptyIntersect(b1->arg(i), e2)
-              && a1->arg(i) != b1->arg(i))
-            return false;
-          // to extend..
-        }
-        return true;
-      }
-      return false;
-    }
-    return (a == b);
   }
 
   inline static ExprSet minusSets(ExprSet& v1, ExprSet& v2){
