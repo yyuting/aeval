@@ -24,6 +24,8 @@ namespace ufo
     Expr baseCon;
     Expr indCon;
     ExprSet allSubformulas;
+    ExprMap varVersions;
+    ExprMap varVersions1;
 
     void checkConstructor(Expr op, ExprVector& constructors, bool& base, bool& ind)
     {
@@ -99,7 +101,6 @@ namespace ufo
       ExprSet vars;
       ExprVector argsPrimed;
       ExprVector types;
-      ExprMap varVersions;
       filter(conjoin(ops1, efac), bind::IsConst (), inserter(vars, vars.begin()));
       filter(conjoin(ops2, efac), bind::IsConst (), inserter(vars, vars.begin()));
       for (auto & v : vars)
@@ -113,6 +114,7 @@ namespace ufo
             if (str == lexical_cast<string>(v1))
             {
               varVersions[v] = v1;
+              varVersions1[v1] = v;
               break;
             }
           }
@@ -123,7 +125,7 @@ namespace ufo
 
       types.push_back (mk<BOOL_TY> (efac));
       Expr rel = bind::fdecl (mkTerm<string> ("R", efac), types);
-      
+
       assert(isOpX<EQ>(baseFormula1));
 
       ExprVector argsBase;
@@ -146,12 +148,14 @@ namespace ufo
           argsBase.push_back(varVersions[v]);
         }
         argsInd1.push_back(v);                // primed
-        argsInd2.push_back(varVersions[v]);   // unprimed
+        if (isOpX<AD_TY>(v->last()->last()))
+          argsInd2.push_back(v);   // unprimed
+        else
+          argsInd2.push_back(varVersions[v]);
       }
 
       Expr baseApp = bind::fapp (rel, argsBase);
       Expr baseEq = mk<EQ>(baseApp, baseFormula2);
-      Expr indApp2 = bind::fapp (rel, argsInd2);
 
       // serialize base case
       ExprSet baseVars;
@@ -159,7 +163,8 @@ namespace ufo
       filter(baseEq, bind::IsConst (), inserter(baseVars, baseVars.begin()));
       for (auto & a : baseVars) if (a != baseCon) baseArgs.push_back(a->last());
       baseArgs.push_back(baseEq);
-      u.serialize_formula(mknary<FORALL>(baseArgs));
+      Expr baseRelation = mknary<FORALL>(baseArgs);
+      u.serialize_formula(baseRelation);
 
       ExprSet otherConstraints;
       map <Expr, ExprVector> tmp;
@@ -188,6 +193,84 @@ namespace ufo
         if (!found) otherConstraints.insert(f);
       }
 
+      for (int adtVar = 0; adtVar < argsInd2.size(); adtVar++)
+      {
+        Expr var = argsInd2[adtVar];
+        // identify the only ADT-argument here
+        if(tmp[var].size() > 0)
+        {
+          auto args = argsInd2;
+          // tmp[var] contains (possibly many) constructors of the ADT
+          for (auto & a : tmp[var])
+          {
+            // compile LHS of the equality
+            args[adtVar] = a;
+            Expr indApp2 = bind::fapp (rel, args);
+
+            ExprSet vrs;
+            filter (a, bind::IsConst (), inserter(vrs, vrs.begin()));
+
+            int arrVar = -1;
+            for (int j = 0; j < argsInd2.size(); j++)
+            {
+              if (isOpX<ARRAY_TY>(argsInd2[j]->last()->last()))
+                arrVar = j;
+            }
+
+            int intVar = -1;
+            for (int j = 0; j < argsInd2.size(); j++)
+            {
+              if (isOpX<INT_TY>(argsInd2[j]->last()->last()))
+              {
+                if (intVar == -1) // hack right now (to try other index variables)
+                  intVar = j;
+              }
+            }
+
+            // guess RHS of the equality
+            if (arrVar >= 0 && intVar >= 0)
+            {
+              ExprSet cnjs;
+              for (auto & c : otherConstraints)
+              {
+                if (contains(c, argsInd2[intVar]) && !containsOp<AD_TY>(c) && !containsOp<ARRAY_TY>(c))
+                  cnjs.insert(c);
+              }
+              for (auto & vr : vrs)
+              {
+                if (vr->last()->last() == argsInd2[arrVar]->last()->last()->last())
+                {
+                  for (auto e : tmp[varVersions1[argsInd2[intVar]]])
+                  {
+                    if (isOpX<PLUS>(e)) e = mk<MINUS>(e->left(), e->right()); // hack right now
+                    ExprSet cnjs1 = cnjs;
+                    cnjs1.insert(mk<EQ>(vr, mk<SELECT>(argsInd2[arrVar], e)));
+                    ExprVector args2 = argsInd2;
+                    args2[intVar] = e;
+                    args2[adtVar] = varVersions[args2[adtVar]];
+                    cnjs1.insert(bind::fapp (rel, args2));
+
+                    ExprVector args1;
+                    ExprVector vars;
+
+                    filter(indApp2, bind::IsConst (), inserter(vars, vars.begin()));
+                    for (auto & a : vars)
+                    {
+                      if (a != baseCon) args1.push_back(a->last());
+                    }
+                    args1.push_back(mk<EQ>(indApp2, conjoin(cnjs1, efac)));
+                    Expr indRelation = mknary<FORALL>(args1);
+
+                    u.serialize_formula(indRelation);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      /*
       // find all combinations of inductive rules based on equations from the formulas
       vector<int> combs;
       for (auto & v : argsInd1)
@@ -222,14 +305,24 @@ namespace ufo
         // serialize inductive case
 
         ExprSet vars;
-        args.clear();
+        ExprVector args1;
+
         filter(indDef, bind::IsConst (), inserter(vars, vars.begin()));
-        for (auto & a : vars) if (a != baseCon) args.push_back(a->last());
-        args.push_back(indDef);
-        u.serialize_formula(mknary<FORALL>(args));
+        for (auto & a : vars)
+        {
+          if (a != baseCon)
+          {
+            args1.push_back(a->last());
+//            tmp.push_back(a);
+          }
+        }
+        args1.push_back(indDef);
+        Expr indRelation = mknary<FORALL>(args1);
+        u.serialize_formula(indRelation);
 
         // TODO: integrate with ADTSolver.hpp and generate lemmas
       }
+       */
     }
 
     static void getCombinations(vector<int>& combs, vector<vector<int>>& res)
