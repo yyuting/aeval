@@ -159,7 +159,7 @@ namespace ufo
       return mk<MULT>(mkTerm (mpz_class (1), e->getFactory()), e);
     }
   }
-  
+
   /**
    * Represent Zero as multiplication
    */
@@ -168,7 +168,7 @@ namespace ufo
       return mk<MULT>(multiplier, e);
     else return e;
   }
-  
+
   /**
    * Rewrites distributivity rule:
    * a*b + a*c -> a*(b + c)
@@ -180,7 +180,7 @@ namespace ufo
     ExprSet newE;
     newE.insert(multiplier->right());
     multiplier = multiplier->left();
-    
+
     for (unsigned i = 1; i < e->arity (); i++){
       Expr a = mult(e->arg(i));
       if (isOpX<MULT>(a)){
@@ -198,7 +198,7 @@ namespace ufo
     }
     return e;
   }
-  
+
   /**
    * Self explanatory
    */
@@ -211,10 +211,10 @@ namespace ufo
         return true;
       }
     }
-    
+
     return false;
   }
-  
+
   /**
    * Self explanatory
    */
@@ -265,11 +265,11 @@ namespace ufo
       }
       res = mknary<PLUS>(expClauses);
     }
-    
+
     if (isOpX<MULT>(e)) {
       if (lexical_cast<string>(e->left())  == "-1"){
         Expr l = e->right();
-        
+
         if (isOpX<PLUS>(l)) {
           ExprSet expClauses;
           for (auto it = l->args_begin(), end = l->args_end(); it != end; ++it){
@@ -279,10 +279,10 @@ namespace ufo
         }
       }
     }
-    
+
     return res;
   }
-  
+
   /**
    * Helper used in ineqReverter
    */
@@ -294,7 +294,7 @@ namespace ufo
 
     return mk<T>(additiveInverse(e->left()), additiveInverse(exprDistributor(e->right())));
   }
-  
+
   /**
    *  Helper used in ineqMover
    */
@@ -303,9 +303,9 @@ namespace ufo
     Expr r = e->right();
     Expr lhs;     // expression, containing var; assume, var contains only in one clause
     ExprSet rhs;  // the rest of e
-    
+
     // first, parse l;
-    
+
     if (isOpX<PLUS>(l)){
       for (unsigned i = 0; i < l->arity (); i++){
         Expr a = l->arg(i);
@@ -330,9 +330,9 @@ namespace ufo
         rhs.insert(additiveInverse(l));
       }
     }
-    
+
     // second, parse r;
-    
+
     if (isOpX<PLUS>(r)){
       for (unsigned i = 0; i < r->arity (); i++){
         Expr a = r->arg(i);
@@ -349,9 +349,9 @@ namespace ufo
         rhs.insert(r);
       }
     }
-    
+
     // third, combine results;
-    
+
     if (lhs != 0){
       Expr rhsPlus;
       if (rhs.size() > 1){
@@ -365,7 +365,7 @@ namespace ufo
     }
     return e;
   }
-  
+
   /**
    * Helper used in exprMover
    */
@@ -378,7 +378,7 @@ namespace ufo
       l = exprSorted(l);
       return mk<T>(r, l);
     }
-    
+
     if (isOpX<MULT>(r)){
       if (r->left() == var || r->right() == var){
         l = exprSorted(l);
@@ -387,7 +387,7 @@ namespace ufo
     }
     return e;
   }
-  
+
   /**
    *  Merge adjacent inequalities
    *  (a <= b && a >= b) -> (a == b)
@@ -413,7 +413,7 @@ namespace ufo
       }
     }
   }
-  
+
   /**
    *  Merge adjacent inequalities
    *  (a <= b && b <= a) -> (a == b)
@@ -435,7 +435,7 @@ namespace ufo
       }
     }
   }
-  
+
   /**
    *  Merge adjacent inequalities
    *  (a <= 0 && -a <= 0) -> (a == 0)
@@ -462,7 +462,7 @@ namespace ufo
       }
     }
   }
-  
+
   /**
    *  Trivial simplifier:
    *  (-1*a <= -1*b) -> (a >= b)
@@ -485,7 +485,7 @@ namespace ufo
       }
     return e;
   }
-  
+
   inline static Expr ineqNegReverter(Expr a){
     if (isOpX<NEG>(a)){
       Expr e = a->arg(0);
@@ -505,7 +505,7 @@ namespace ufo
     }
     return a;
   }
-  
+
   /**
    *  Transform the inequalities by the following rules:
    *  (a + .. + var + .. + b <= c ) -> (var <= -1*a + .. + -1*b + c)
@@ -531,7 +531,7 @@ namespace ufo
       }
     return e;
   }
-  
+
   /**
    *  Move "var" to the left hand side of expression:
    *  (a <= var) -> (var >= b)
@@ -550,7 +550,7 @@ namespace ufo
       }
     return e;
   }
-  
+
   /**
    *
    */
@@ -562,7 +562,7 @@ namespace ufo
     }
     return e;
   }
-  
+
   /**
    * Search for an equality
    */
@@ -686,7 +686,7 @@ namespace ufo
     ExprVector args;
     Expr ret;
     bool f = false;
-    
+
     for (ENode::args_iterator it = exp->args_begin(),
          end = exp->args_end(); it != end; ++it){
       if (*it == to_skip) f = true;
@@ -697,42 +697,42 @@ namespace ufo
     {
       args.push_back(additiveInverse(to_skip));
     }
-    
+
     if (args.size() == 1) {
       ret = args[0];
     }
-    
+
     else if (args.size() == 2){
       if (isOpX<UN_MINUS>(args[0]) && !isOpX<UN_MINUS>(args[1]))
         ret = mk<MINUS>(args[1], args[0]->left());
       else if (!isOpX<UN_MINUS>(args[0]) && isOpX<UN_MINUS>(args[1]))
         ret = mk<MINUS>(args[0], args[1]->left());
-      
+
       else ret = mknary<PLUS>(args);
-      
+
     } else {
       ret = mknary<PLUS>(args);
     }
     return ret;
   }
-  
+
   // return a - b
   inline static Expr simplifiedMinus (Expr a, Expr b){
     Expr ret = mk<MINUS>(a, b);
-    
+
     if (a == b) {
       ret = mkTerm (mpz_class (0), a->getFactory());
     } else
-      
+
       if (isOpX<PLUS>(a)){
         return simplifiedPlus(a, b);
       } else
-        
+
         if (isOpX<PLUS>(b)){
           Expr res = simplifiedPlus(b, a);
           return mk<UN_MINUS>(res);
         } else
-          
+
           if (isOpX<MINUS>(a)){
             if (a->left() == b) ret = mk<UN_MINUS>(a->right());
           } else
@@ -765,7 +765,7 @@ namespace ufo
                         ret = mk<UN_MINUS>(b);
                       }
                     }
-    
+
     return ret;
   }
 
@@ -833,11 +833,11 @@ namespace ufo
   {
     ExprFactory &efac;
     SimplifyBoolExpr (ExprFactory& _efac) : efac(_efac){};
-    
+
     Expr operator() (Expr exp)
     {
       // GF: to enhance
-      
+
       if (isOpX<IMPL>(exp))
       {
         Expr lhs = simplifyBool(exp->left());
@@ -848,7 +848,7 @@ namespace ufo
 
         return mk<IMPL>(lhs, rhs);
       }
-      
+
       if (isOpX<OR>(exp)){
         ExprSet dsjs;
         ExprSet newDsjs;
@@ -861,7 +861,7 @@ namespace ufo
         }
         return disjoin(newDsjs, efac);
       }
-      
+
       if (isOpX<AND>(exp)){
         ExprSet cnjs;
         ExprSet newCnjs;
@@ -978,13 +978,13 @@ namespace ufo
     RW<SimplifyArithmExpr> rw(new SimplifyArithmExpr(exp->getFactory()));
     return dagVisit (rw, exp);
   }
-  
+
   inline static Expr simplifyBool (Expr exp)
   {
     RW<SimplifyBoolExpr> rw(new SimplifyBoolExpr(exp->getFactory()));
     return dagVisit (rw, exp);
   }
-  
+
   inline static Expr simplifyExists (Expr exp)
   {
     RW<SimplifyExists> rw(new SimplifyExists(exp->getFactory()));
@@ -1003,7 +1003,7 @@ namespace ufo
     }
     return v3;
   }
-  
+
   /**
    * To rem
    */
@@ -1012,10 +1012,10 @@ namespace ufo
     ExprVector av;
     filter (a, bind::IsConst (), back_inserter (av));
     if (av.size() == 1) if (av[0] == b) return true;
-    
+
     return false;
   }
-  
+
   inline static Expr simplifiedAnd (Expr a, Expr b){
     ExprSet conjs;
     getConj(a, conjs);
@@ -1025,7 +1025,7 @@ namespace ufo
     (conjs.size() == 1) ? *(conjs.begin()) :
     mknary<AND>(conjs);
   }
-  
+
   inline int intersectSize(ExprVector& a, ExprVector& b){
     ExprSet c;
     for (auto &var: a)
@@ -1136,8 +1136,7 @@ namespace ufo
     ExprMap replaced;
     for (auto & a : vars)
     {
-      Expr sub = a.first;
-      for (auto & r : replaced) sub = replaceAll(sub, r.first, r.second);
+      Expr sub = replaceAll(a.first, replaced);
       RW<QFregularizer> rw(new QFregularizer(a.second));
       Expr b = dagVisit (rw, sub);
       replaced[a.first] = b;
@@ -1147,8 +1146,12 @@ namespace ufo
     return exp;
   }
 
+  static Expr normalizeArithm (Expr exp);
+
   inline static bool findMatching(Expr pattern, Expr exp, ExprVector& vars, ExprMap& matching)
   {
+    pattern = normalizeArithm(pattern);
+    exp = normalizeArithm(exp);
     if (pattern == exp && (isOpX<FDECL>(pattern) || isOpX<MPZ>(pattern)))  return true;
 
     if (bind::typeOf(pattern) != bind::typeOf(exp)) return false;
@@ -1161,6 +1164,15 @@ namespace ufo
         matching[pattern] = exp;
         return true;
       }
+    }
+
+    // check if the whole pattern is matched
+    if (normalizeArithm(replaceAll(pattern, matching)) == exp)
+    {
+      for (auto & a : vars)
+        if(contains(exp, a) && matching[a] == NULL)
+          matching[a] = a;
+      return true;
     }
 
     if ((isOpX<EQ>(exp) && isOpX<EQ>(pattern)) ||
@@ -1256,6 +1268,258 @@ namespace ufo
   inline static Expr liftITEs (Expr exp)
   {
     RW<ITElifter> rw(new ITElifter());
+    return dagVisit (rw, exp);
+  }
+
+  inline static bool isNumeric(Expr a)
+  {
+    // don't consider ITE-s
+    return (isOp<NumericOp>(a) || isOpX<MPZ>(a) ||
+            isOpX<MPQ>(a) || bind::isIntConst(a) || isOpX<SELECT>(a));
+  }
+
+  inline static void getMultOps (Expr a, ExprVector &ops)
+  {
+    if (isOpX<MULT>(a)){
+      for (unsigned i = 0; i < a->arity(); i++){
+        getMultOps(a->arg(i), ops);
+      }
+    } else {
+      ops.push_back(a);
+    }
+  }
+
+  static void getAddTerm (Expr a, ExprVector &terms); // declaration only
+
+  inline static Expr arithmInverse(Expr e)
+  {
+    bool success = true;
+    if (isOpX<MULT>(e))
+    {
+      int coef = 1;
+      ExprVector ops;
+      getMultOps (e, ops);
+
+      Expr var = NULL;
+      for (auto & a : ops)
+      {
+        if (isOpX<MPZ>(a))
+        {
+          coef *= lexical_cast<int>(a);
+        }
+        else if (bind::isIntConst(a) && var == NULL)
+        {
+          var = a;
+        }
+        else
+        {
+          success = false;
+        }
+      }
+      if (success && coef != 0) return mk<MULT>(mkTerm (mpz_class (-coef), e->getFactory()), e->right());
+      if (coef == 0) return mkTerm (mpz_class (0), e->getFactory());
+    }
+    else if (isOpX<PLUS>(e))
+    {
+      ExprVector terms;
+      for (auto it = e->args_begin (), end = e->args_end (); it != end; ++it)
+      {
+        getAddTerm(arithmInverse(*it), terms);
+      }
+      return mknary<PLUS>(terms);
+    }
+    else if (isOpX<MINUS>(e))
+    {
+      ExprVector terms;
+      getAddTerm(arithmInverse(*e->args_begin ()), terms);
+      auto it = e->args_begin () + 1;
+      for (auto end = e->args_end (); it != end; ++it)
+      {
+        getAddTerm(*it, terms);
+      }
+      return mknary<PLUS>(terms);
+    }
+    else if (isOpX<UN_MINUS>(e))
+    {
+      return e->left();
+    }
+    else if (isOpX<MPZ>(e))
+    {
+      return mkTerm (mpz_class (-lexical_cast<int>(e)), e->getFactory());
+    }
+    return mk<MULT>(mkTerm (mpz_class (-1), e->getFactory()), e);
+  }
+
+  inline static void getAddTerm (Expr a, ExprVector &terms) // implementation (mutually recursive)
+  {
+    if (isOpX<PLUS>(a))
+    {
+      for (auto it = a->args_begin (), end = a->args_end (); it != end; ++it)
+      {
+        getAddTerm(*it, terms);
+      }
+    }
+    else if (isOpX<MINUS>(a))
+    {
+      auto it = a->args_begin ();
+      auto end = a->args_end ();
+      getAddTerm(*it, terms);
+      ++it;
+      for (; it != end; ++it)
+      {
+        getAddTerm(arithmInverse(*it), terms);
+      }
+    }
+    else if (isOpX<UN_MINUS>(a))
+    {
+      getAddTerm(arithmInverse(a->left()), terms);
+    }
+    else
+    {
+      terms.push_back(a);
+    }
+  }
+
+  inline static Expr normalizeTerm(Expr term)
+  {
+    ExprVector intVars;
+    filter (term, bind::IsConst (), inserter(intVars, intVars.begin()));
+    ExprVector all;
+    getAddTerm(term, all);
+    ExprSet newtermPos;
+    ExprSet newtermNeg;
+    for (auto &v : intVars)
+    {
+      int coef = 0;
+      string s1 = lexical_cast<string>(v);
+      for (auto it = all.begin(); it != all.end();)
+      {
+        string s2 = lexical_cast<string>(*it);
+
+        if (s1 == s2)
+        {
+          coef++;
+          it = all.erase(it);
+        }
+        else if (isOpX<UN_MINUS>(*it))
+        {
+          string s3 = lexical_cast<string>((*it)->left());
+          if (s1 == s3)
+          {
+            coef--;
+            it = all.erase(it);
+          }
+          else
+          {
+            ++it;
+          }
+        }
+        else if (isOpX<MULT>(*it))
+        {
+          ExprVector ops;
+          getMultOps (*it, ops);
+
+          int c = 1;
+          bool success = true;
+          for (auto & a : ops)
+          {
+            if (s1 == lexical_cast<string>(a))
+            {
+              // all good!
+            }
+            else if (isOpX<MPZ>(a))
+            {
+              c = c * lexical_cast<int>(a);
+            }
+            else
+            {
+              ++it;
+              success = false;
+              break;
+            }
+          }
+          if (success)
+          {
+            coef += c;
+            it = all.erase(it);
+          }
+        }
+        else
+        {
+          ++it;
+        }
+      }
+      if (coef == 1)
+        newtermPos.insert(v);
+      else if (coef > 0)
+        newtermPos.insert(mk<MULT>(mkTerm (mpz_class (coef), term->getFactory()), v));
+      else if (coef == -1)
+        newtermNeg.insert(v);
+      else if (coef < 0)
+        newtermNeg.insert(mk<MULT>(mkTerm (mpz_class (-coef), term->getFactory()), v));
+    }
+
+    bool success = true;
+    int intconst = 0;
+
+    for (auto &e : all)
+    {
+      if (isOpX<MPZ>(e))
+      {
+        intconst += lexical_cast<int>(e);
+      }
+      else if (isOpX<MULT>(e))
+      {
+        // GF: sometimes it fails (no idea why)
+        int thisTerm = 1;
+        for (auto it = e->args_begin (), end = e->args_end (); it != end; ++it)
+        {
+          if (isOpX<MPZ>(*it))
+            thisTerm *= lexical_cast<int>(*it);
+          else
+            success = false;
+        }
+        intconst += thisTerm;
+      }
+      else
+      {
+        success = false;
+      }
+    }
+    if (intconst > 0)
+      newtermPos.insert(mkTerm (mpz_class (intconst), term->getFactory()));
+    else if (intconst < 0)
+      newtermNeg.insert(mkTerm (mpz_class (-intconst), term->getFactory()));
+
+    if (newtermNeg.empty())
+      return mkplus(newtermPos, term->getFactory());
+    else
+      return mk<MINUS>(mkplus(newtermPos, term->getFactory()),
+                       mkplus(newtermNeg, term->getFactory()));
+  }
+
+  struct NormalizeArithmExpr
+  {
+    ExprFactory &efac;
+
+    NormalizeArithmExpr (ExprFactory& _efac):
+    efac(_efac){};
+
+    Expr operator() (Expr e)
+    {
+      if (isOpX<PLUS>(e) || isOpX<MINUS>(e) || isOpX<MULT>(e))
+        return normalizeTerm(e);
+      if (isOp<ComparissonOp>(e)) {
+        // GF: to do a similar thing to normalizeTerm;
+        return e;
+      }
+      return e;
+    }
+  };
+
+  inline static Expr normalizeArithm (Expr exp)
+  {
+    RW<NormalizeArithmExpr> rw(new NormalizeArithmExpr(exp->getFactory()));
     return dagVisit (rw, exp);
   }
 }
