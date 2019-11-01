@@ -144,7 +144,7 @@ namespace ufo
       smt.assertExpr (s);
 
       if (!smt.solve ()) {
-        outs() << "\nE.v.: -; Iter.: 0; Result: valid\n\n";
+//        outs() << "\nE.v.: -; Iter.: 0; Result: valid\n\n";
         return false;
       } else {
         ZSolver<EZ3>::Model m = smt.getModel();
@@ -158,7 +158,7 @@ namespace ufo
       {
         smt.assertExpr (boolop::lneg (t));
         boost::tribool res = smt.solve ();
-        outs() << "\nE.v.: 0; Iter.: 0; Result: " << (res? "invalid" : "valid") << "\n\n";
+//        outs() << "\nE.v.: 0; Iter.: 0; Result: " << (res? "invalid" : "valid") << "\n\n";
         return res;
       }
 
@@ -201,8 +201,8 @@ namespace ufo
         smt.assertExpr (t);
       }
 
-      outs() << "\nE.v.: " << v.size() << "; Iter.: " << partitioning_size
-             << "; Result: " << (res? "invalid" : "valid") << "\n\n";
+//      outs() << "\nE.v.: " << v.size() << "; Iter.: " << partitioning_size
+//             << "; Result: " << (res? "invalid" : "valid") << "\n\n";
 
       return res;
     }

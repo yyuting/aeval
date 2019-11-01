@@ -3,6 +3,7 @@
 #include <assert.h>
 
 #include "ae/SMTUtils.hpp"
+#include "ae/AeValSolver.hpp"
 #include "ufo/Smt/EZ3.hh"
 
 using namespace std;
@@ -17,6 +18,7 @@ namespace ufo
       Expr fla;
       Expr flaForall;
       Expr flaOrig;
+      ExprSet flaOrigDisj;
       ExprMap recDefsMu;
       ExprMap recDefsNu;
       Expr muVar;
@@ -103,12 +105,18 @@ namespace ufo
           c = regularizeQF(c->right());
           if (pref == "mu")
           {
-            recDefsMu[c->last()->left()] = c->last()->right();
+            Expr def = c->last()->right();
+            for (auto & a : recDefsNu)
+              if (contains (def, a.first)) exit(0);
+            recDefsMu[c->last()->left()] = def;
             muVar = var;
           }
           if (pref == "nu")
           {
-            recDefsNu[c->last()->left()] = c->last()->right();
+            Expr def = c->last()->right();
+            for (auto & a : recDefsMu)
+              if (contains (def, a.first)) exit(0);
+            recDefsNu[c->last()->left()] = def;
             nuVar = var;
           }
         }
@@ -119,6 +127,7 @@ namespace ufo
       usedNu = false;
       flaOrig = fla;
       fla = fla->right();
+      getDisj(flaOrig->right(), flaOrigDisj);
     }
 
     bool iter()
@@ -146,36 +155,10 @@ namespace ufo
 
       fla = expandExists(fla);
       fla = simplifyExists(fla);
+      fla = expandConjSubexpr(fla);
 
-      // creating abstraction
-
-      ExprSet dsj;
-      getDisj(fla, dsj);
-      ExprSet newDisj;
-
-      for (auto & d : dsj)
-      {
-        ExprSet cnj;
-        getConj(d, cnj);
-        Expr app;
-        for (auto & c : cnj)
-        {
-          for (auto & a : recDefsMu)
-            if (contains(c, a.first->left()))
-              app = c;
-          for (auto & a : recDefsNu)
-            if (contains(c, a.first->left()))
-              app = c;
-        }
-        if (app == NULL) app = conjoin(cnj, efac);
-        getDisj(app, newDisj);
-      }
-
-      fla = disjoin(newDisj, efac);
-
-      // finding forallMatching
-      ExprSet flaOrigDisj;
-      getDisj(flaOrig->right(), flaOrigDisj);
+      ExprSet flaUpdDisj;
+      getDisj(fla, flaUpdDisj);
 
       Expr ex1;
       Expr ex2;
@@ -183,13 +166,99 @@ namespace ufo
       ExprMap forallMatching;
       bool hasFapps = false;
 
-      for (auto it = newDisj.begin(); it != newDisj.end();)
+      map <Expr, ExprVector> all;
+      map <Expr, ExprVector> usedTmp;
+      for (auto & a : flaOrigDisj)
+      {
+        for (auto & b : flaUpdDisj)
+        {
+          ExprSet tmp;
+          getConj(b, tmp);
+          for (auto it = tmp.begin(); it != tmp.end();)
+          {
+            if ((isOpX<EXISTS>(a) && isOpX<EXISTS>(*it)) ||
+                (isOpX<FAPP>(a) && isOpX<FAPP>(*it) && a->left() == (*it)->left()))
+            {
+              it = tmp.erase(it);
+              all[a].push_back(conjoin(tmp, efac));
+              usedTmp[a].push_back(b);
+            }
+            else ++it;
+          }
+        }
+      }
+
+      ExprVector commonSubset;
+      bool first = true;
+      for (auto & a : all)
+      {
+        if (first) {
+          first = false;
+          commonSubset = a.second;
+          continue;
+        }
+
+        for (auto it = commonSubset.begin(); it != commonSubset.end();)
+        {
+          if (find(a.second.begin(), a.second.end(), *it) == a.second.end())
+            it = commonSubset.erase(it);
+          else ++it;
+        }
+      }
+
+      Expr comm = conjoin(commonSubset, efac);
+      ExprSet toSearchRem;
+      Expr matchNeedToBeFound;
+
+      if (isOpX<TRUE>(comm))
+      {
+        // try to simplify further
+        fla = resolve(fla);
+        flaUpdDisj.clear();
+        getDisj(fla, flaUpdDisj);
+      }
+      else
+      {
+        ExprSet finl;
+        for (auto & a : all)
+        {
+          ExprVector tmp = a.second;
+          bool found = false;
+          for (auto & b : tmp)
+          {
+            if (b == comm)
+            {
+              found = true;
+              for (auto & c : usedTmp[a.first])
+              {
+                if (contains(c, comm))
+                {
+                  flaUpdDisj.erase(c);
+                  finl.insert(simplifyBool(replaceAll(c, comm, mk<TRUE>(efac))));
+                }
+              }
+            }
+          }
+        }
+
+        if (!u.implies(mkNeg(comm), disjoin(flaUpdDisj, efac)))
+        {
+          //outs () << "unable to create abstraction\n";
+          return false;
+        }
+
+        toSearchRem = flaUpdDisj;
+        flaUpdDisj = finl;
+      }
+
+      // finding forallMatching
+      for (auto it = flaUpdDisj.begin(); it != flaUpdDisj.end();)
       {
         if (isOpX<EXISTS>(*it))
         {
           if (ex2 != NULL) exit(0); // unsupported
           ex2 = *it;
-          it = newDisj.erase(it);
+          it = flaUpdDisj.erase(it);
         }
         else ++it;
       }
@@ -213,7 +282,7 @@ namespace ufo
           Expr a = normalizeArithm(replaceAll(*it, forallMatching));
 
           bool found = false;
-          for (auto it2 = newDisj.begin(); it2 != newDisj.end();)
+          for (auto it2 = flaUpdDisj.begin(); it2 != flaUpdDisj.end();)
           {
             if (!isOpX<FAPP>(*it2))
             {
@@ -232,7 +301,7 @@ namespace ufo
                 }
               }
               used.insert(*it2);
-              it2 = newDisj.erase(it2);
+              it2 = flaUpdDisj.erase(it2);
               found = true;
               break;
             }
@@ -244,16 +313,32 @@ namespace ufo
 
       if (!forallMatching.empty() && ex1 == NULL && ex2 == NULL)
       {
-        if (!flaOrigDisj.empty())
+        bool sanityCheck = false;
+        for (auto & m : forallMatching)
+          if (m.first != NULL && m.second != NULL)
+          {
+            sanityCheck = true;
+          }
+        if (!sanityCheck) return false;
+
+        if (!flaOrigDisj.empty() && !toSearchRem.empty())
         {
           Expr whatsLeft = replaceAll(disjoin(flaOrigDisj, efac), forallMatching);
-          if (!u.isEquiv(whatsLeft, disjoin(newDisj, efac))) return false;
-
-          newDisj.clear();
+          if (!u.implies(whatsLeft, disjoin(toSearchRem, efac))) return false;
+          flaUpdDisj.clear();
         }
 
-        fla = replaceAll(flaForall, flaForall->last(),
-                         mk<EQ>(flaOrig->left(), replaceAll(flaRel, forallMatching)));
+        if (isOpX<TRUE>(comm))
+        {
+          fla = replaceAll(flaForall, flaForall->last(),
+                           mk<EQ>(flaOrig->left(),  replaceAll(flaRel, forallMatching)));
+        }
+        else
+        {
+          fla = replaceAll(flaForall, flaForall->last(),
+                           mk<EQ>(flaOrig->left(), mk<OR>(mkNeg(comm),
+                                  mk<AND>(comm, replaceAll(flaRel, forallMatching)))));
+        }
         print(fla);
         return true;
       }
@@ -279,7 +364,7 @@ namespace ufo
         getConj(ex1->last(), cnjs1);
         getConj(ex2->last(), cnjs2);
         if (!flaOrigDisj.empty()) cnjs1.insert(disjoin(flaOrigDisj, efac));
-        if (!newDisj.empty()) cnjs2.insert(disjoin(newDisj, efac));
+        if (!toSearchRem.empty()) cnjs2.insert(disjoin(toSearchRem, efac));
 
         ExprMap existsMatching;
         for (auto it1 = cnjs1.begin(); it1 != cnjs1.end(); )
@@ -301,6 +386,22 @@ namespace ufo
           if (!doBreak) ++it1;
         }
 
+        for (auto & m : existsMatching)
+          if (m.first != NULL && m.second != NULL)
+          {
+
+            Expr tmp = cloneVar(m.first, mkTerm<std::string> (lexical_cast<string>(m.first)+"_tmp", efac));
+            Expr tmp1 = mk<EQ>(tmp, m.second);
+            ExprSet v;
+            filter (m.second, bind::IsConst (), inserter(v, v.begin()));
+            AeValSolver ae(mk<TRUE>(efac), tmp1, v, false, false);
+            if (ae.solve())
+            {
+              outs() << "  Surjectivity sanity failed: " << *m.first << "  <-->  " << *m.second << "\n";
+              exit(0);
+            }
+          }
+
         Expr whatsLeft = replaceAll(conjoin(cnjs1, efac), existsMatching);
         Expr match = conjoin(cnjs2, efac);
         if (u.implies(match, whatsLeft))
@@ -312,7 +413,7 @@ namespace ufo
           }
           else if (u.implies(match, whatsLeft))
           {
-            newDisj.clear();
+            flaUpdDisj.clear();
           }
           else
           {
@@ -320,8 +421,15 @@ namespace ufo
           }
 
           Expr upd = replaceAll(replaceAll(flaRel, forallMatching), existsMatching);
-          newDisj.insert(upd);
-          fla = replaceAll(flaForall, flaForall->last(), mk<EQ>(flaOrig->left(), disjoin(newDisj, efac)));
+          flaUpdDisj.insert(upd);
+          if (isOpX<TRUE>(comm))
+          {
+            fla = replaceAll(flaForall, flaForall->last(), mk<EQ>(flaOrig->left(),
+                        disjoin(flaUpdDisj, efac)));
+          } else {
+            fla = replaceAll(flaForall, flaForall->last(), mk<EQ>(flaOrig->left(),
+                        mk<OR>(mkNeg(comm), mk<AND>(comm, disjoin(flaUpdDisj, efac)))));
+          }
           print(fla);
           return true;
         }

@@ -9,7 +9,7 @@
 (assert (forall ((x Int)) (G x)))
 
 (assert (forall ((x Int))
-  (= (G x) (or (Even (+ x 1)) (NotOdd x)))))
+  (= (G x) (or (Even x) (NotOdd (- x 1))))))
 
 (assert (and nu (forall ((x Int))
   (= (NotEven x) (and (not (= x 0)) (NotOdd (- x 1)))))))

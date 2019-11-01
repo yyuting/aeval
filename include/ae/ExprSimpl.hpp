@@ -663,6 +663,25 @@ namespace ufo
     return simplifyBool(disjoin (newer, exp->getFactory()));
   }
 
+  struct ExpandConjExpr
+  {
+    ExpandConjExpr (){};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<AND>(exp) && containsOp<OR>(exp))
+        return expandConj(exp);
+      else
+        return exp;
+    }
+  };
+
+  inline static Expr expandConjSubexpr (Expr exp)
+  {
+    RW<ExpandConjExpr> rw(new ExpandConjExpr());
+    return dagVisit (rw, exp);
+  }
+
   inline static Expr simplifyPlus (Expr exp){
     ExprVector plsOps;
     getPlusOps (exp, plsOps);
@@ -849,7 +868,8 @@ namespace ufo
         return mk<IMPL>(lhs, rhs);
       }
 
-      if (isOpX<OR>(exp)){
+      if (isOpX<OR>(exp))
+      {
         ExprSet dsjs;
         ExprSet newDsjs;
         getDisj(exp, dsjs);
@@ -862,7 +882,8 @@ namespace ufo
         return disjoin(newDsjs, efac);
       }
 
-      if (isOpX<AND>(exp)){
+      if (isOpX<AND>(exp))
+      {
         ExprSet cnjs;
         ExprSet newCnjs;
         getConj(exp, cnjs);
@@ -877,12 +898,86 @@ namespace ufo
         return conjoin(newCnjs, efac);
       }
 
-      if (isOpX<EQ>(exp) && exp->left() == exp->right()) {
+      if (isOpX<EQ>(exp) && exp->left() == exp->right())
+      {
         return mk<TRUE>(efac);
       }
       return exp;
     }
   };
+
+  static Expr resolve(Expr e);
+
+  struct ResolveExpr
+  {
+    ExprFactory &efac;
+    ResolveExpr (ExprFactory& _efac) : efac(_efac){};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<OR>(exp))
+      {
+        ExprSet dsjs;
+        ExprSet newDsjs;
+        getDisj(exp, dsjs);
+        map<Expr, ExprSet> resolvs;
+        for (auto & d : dsjs)
+        {
+          if (isOpX<TRUE>(d)) return mk<TRUE>(efac);
+          if (isOpX<EQ>(d) && d->left() == d->right()) return mk<TRUE>(efac);
+          if (!isOpX<FALSE>(d)) newDsjs.insert(d);
+          ExprSet tmp;
+          getConj(d, tmp);
+          for (auto & a : tmp) resolvs[a].insert(d);
+        }
+
+        dsjs.clear();
+        ExprSet doneLits;
+        ExprSet done;
+
+        // try resolution
+        for (auto & a1 : resolvs)
+        {
+          if (find(doneLits.begin(), doneLits.end(), a1.first) != doneLits.end()) continue;
+
+          for (auto & a2 : resolvs)
+          {
+            if (find(doneLits.begin(), doneLits.end(), a2.first) != doneLits.end()) continue;
+
+            if (mkNeg(a1.first) == a2.first)
+            {
+              ExprSet tmp;
+              Expr tmp1 = simplifyBool(replaceAll(disjoin(a1.second, efac), a1.first, mk<TRUE>(efac)));
+              if (!isOpX<TRUE>(tmp1)) tmp.insert(tmp1);
+              tmp1 = simplifyBool(replaceAll(disjoin(a2.second, efac), a2.first, mk<TRUE>(efac)));
+              if (!isOpX<TRUE>(tmp1)) tmp.insert(tmp1);
+
+              dsjs.insert(resolve(disjoin(tmp, efac)));
+              done.insert(a1.second.begin(), a1.second.end());
+              done.insert(a2.second.begin(), a2.second.end());
+              doneLits.insert(a1.first);
+              doneLits.insert(a2.first);
+            }
+          }
+        }
+
+        for (auto & a : newDsjs)
+        {
+          if (find(done.begin(), done.end(), a) != done.end()) continue;
+          dsjs.insert(a);
+        }
+
+        return disjoin(dsjs, efac);
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr resolve (Expr exp)
+  {
+    RW<ResolveExpr> rw(new ResolveExpr(exp->getFactory()));
+    return dagVisit (rw, exp);
+  }
 
   static Expr simplifyExists (Expr exp);
 
@@ -1521,6 +1616,21 @@ namespace ufo
   {
     RW<NormalizeArithmExpr> rw(new NormalizeArithmExpr(exp->getFactory()));
     return dagVisit (rw, exp);
+  }
+
+  inline static Expr cloneVar(Expr var, Expr new_name) // ... and give a new_name to the clone
+  {
+    if (bind::isIntConst(var))
+      return bind::intConst(new_name);
+    else if (bind::isRealConst(var))
+      return bind::realConst(new_name);
+    else if (bind::isBoolConst(var))
+      return bind::boolConst(new_name);
+    else if (bind::isConst<ARRAY_TY> (var))
+      return bind::mkConst(new_name, mk<ARRAY_TY> (
+         mk<INT_TY> (new_name->getFactory()),
+         mk<INT_TY> (new_name->getFactory()))); // GF: currently, only Arrays over Ints
+    else return NULL;
   }
 }
 
