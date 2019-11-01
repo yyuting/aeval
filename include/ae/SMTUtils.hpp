@@ -28,59 +28,76 @@ namespace ufo
     template <typename T> Expr getModel(T& vars)
     {
       ExprVector eqs;
-      getModel(vars, eqs);
+      ZSolver<EZ3>::Model m = smt.getModel();
+      for (auto & v : vars)
+      {
+        Expr e = m.eval(v);
+        if (e == NULL)
+        {
+          return NULL;
+        }
+        else if (e != v)
+        {
+          eqs.push_back(mk<EQ>(v, e));
+        }
+        else
+        {
+          if (bind::isBoolConst(v))
+          eqs.push_back(mk<EQ>(v, mk<TRUE>(efac)));
+          else if (bind::isIntConst(v))
+          eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (0), efac)));
+        }
+      }
       return conjoin (eqs, efac);
     }
 
-    template <typename T> void getModel(T& vars, ExprVector& eqs)
-    {
-      ZSolver<EZ3>::Model m = smt.getModel();
-      for (auto & v : vars) if (v != m.eval(v))
-      {
-        eqs.push_back(mk<EQ>(v, m.eval(v)));
-      }
-    }
+    ExprSet allVars;
+    Expr getModel() { return getModel(allVars); }
 
-    /**
-     * SMT-check
-     */
-    bool isSat(Expr a, Expr b)
+    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true)
     {
-      smt.reset();
-      smt.assertExpr (a);
-      smt.assertExpr (b);
-      if (!smt.solve ()) {
-        return false;
-      }
-      return true;
-    }
-
-    /**
-     * SMT-check
-     */
-    bool isSat(Expr a, Expr b, Expr c)
-    {
-      smt.reset();
-      smt.assertExpr (a);
-      smt.assertExpr (b);
-      smt.assertExpr (c);
-      if (!smt.solve ()) {
-        return false;
-      }
-      return true;
-    }
-
-    /**
-     * SMT-check
-     */
-    bool isSat(Expr a, bool reset=true)
-    {
+      allVars.clear();
       if (reset) smt.reset();
-      smt.assertExpr (a);
-      if (!smt.solve ()) {
-        return false;
+      for (auto & c : cnjs)
+      {
+        filter (c, bind::IsConst (), inserter (allVars, allVars.begin()));
+        if (isOpX<FORALL>(c))
+        {
+          ExprVector varz;
+          for (int i = 0; i < c->arity() - 1; i++)
+          {
+            varz.push_back(bind::fapp(c->arg(i)));
+          }
+          smt.assertForallExpr(varz, c->last());
+        }
+        else
+        {
+          if (containsOp<FORALL>(c)) return logic::indeterminate;
+          smt.assertExpr(c);
+        }
       }
-      return true;
+      boost::tribool res = smt.solve ();
+      return res;
+    }
+    /**
+     * SMT-check
+     */
+    boost::tribool isSat(Expr a, Expr b, bool reset=true)
+    {
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      getConj(b, cnjs);
+      return isSat(cnjs, reset);
+    }
+
+    /**
+     * SMT-check
+     */
+    boost::tribool isSat(Expr a, bool reset=true)
+    {
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      return isSat(cnjs, reset);
     }
 
     /**
@@ -90,7 +107,7 @@ namespace ufo
     {
       return implies (a, b) && implies (b, a);
     }
-    
+
     /**
      * SMT-based implication check
      */
@@ -98,17 +115,17 @@ namespace ufo
     {
       if (isOpX<TRUE>(b)) return true;
       if (isOpX<FALSE>(a)) return true;
-      return ! isSat(a, mk<NEG>(b));
+      return ! isSat(a, mkNeg(b));
     }
-    
+
     /**
      * SMT-based check for a tautology
      */
     bool isTrue(Expr a){
       if (isOpX<TRUE>(a)) return true;
-      return !isSat(mk<NEG>(a));
+      return !isSat(mkNeg(a));
     }
-    
+
     /**
      * SMT-based check for false
      */
@@ -130,7 +147,7 @@ namespace ufo
       ExprSet assumptions;
       assumptions.insert(mk<NEQ>(v, val));
 
-      return (!isSat(conjoin(assumptions, efac), false));
+      return (!isSat(assumptions, false));
     }
 
     /**
@@ -194,7 +211,7 @@ namespace ufo
       }
       return ex;
     }
-    
+
     /**
      * Remove some redundant conjuncts from the set of formulas
      */
@@ -211,10 +228,24 @@ namespace ufo
           continue;
         }
 
+        ExprSet old;
+        for (Expr e: newCnjs) old.insert(e);
         ExprSet newCnjsTry = newCnjs;
         newCnjsTry.erase(cnj);
 
-        if (implies (conjoin(newCnjsTry, efac), cnj)) newCnjs.erase(cnj);
+        Expr newConj = conjoin(newCnjsTry, efac);
+        if (implies (newConj, cnj))
+          newCnjs.erase(cnj);
+
+        else {
+          // workaround for arrays or complicated expressions
+          Expr new_name = mkTerm<string> ("subst", cnj->getFactory());
+          Expr new_conj = bind::boolConst(new_name);
+          Expr tmp = replaceAll(newConj, cnj, new_conj);
+          if (implies (tmp, new_conj)) {
+            newCnjs.erase(cnj);
+          }
+        }
       }
       conjs = newCnjs;
     }
@@ -258,9 +289,6 @@ namespace ufo
       disjs = newDisjs;
     }
 
-    /**
-     * Remove some redundant disjuncts from the formula
-     */
     Expr removeRedundantDisjuncts(Expr exp)
     {
       ExprSet disjs;
@@ -292,6 +320,89 @@ namespace ufo
       return exp;
     }
 
+    inline static string varType (Expr var)
+    {
+      if (bind::isIntConst(var))
+      return "Int";
+      else if (bind::isRealConst(var))
+      return "Real";
+      else if (bind::isBoolConst(var))
+      return "Bool";
+      else if (bind::isConst<ARRAY_TY> (var))
+      return "(Array Int Int)";
+      else return "";
+    }
+
+    void print (Expr e)
+    {
+      if (isOpX<FORALL>(e) || isOpX<EXISTS>(e))
+      {
+        if (isOpX<FORALL>(e)) outs () << "(forall (";
+        else outs () << "(exists (";
+
+        for (int i = 0; i < e->arity() - 1; i++)
+        {
+          Expr var = bind::fapp(e->arg(i));
+          outs () << "(" << *var << " " << varType(var) << ") ";
+        }
+        outs () << "\b) ";
+        print (e->last());
+        outs () << ")";
+      }
+      else if (isOpX<AND>(e))
+      {
+        outs () << "(and ";
+        ExprSet cnjs;
+        getConj(e, cnjs);
+        for (auto & c : cnjs)
+        {
+          print(c);
+          outs () << " ";
+        }
+        outs () << "\b)";
+      }
+      else if (isOpX<OR>(e))
+      {
+        outs () << "(or ";
+        ExprSet dsjs;
+        getDisj(e, dsjs);
+        for (auto & d : dsjs)
+        {
+          print(d);
+          outs () << " ";
+        }
+        outs () << "\b)";
+      }
+      else if (isOpX<IMPL>(e) || isOp<ComparissonOp>(e))
+      {
+        if (isOpX<IMPL>(e)) outs () << "(=> ";
+        if (isOpX<EQ>(e)) outs () << "(= ";
+        if (isOpX<GEQ>(e)) outs () << "(>= ";
+        if (isOpX<LEQ>(e)) outs () << "(<= ";
+        if (isOpX<LT>(e)) outs () << "(< ";
+        if (isOpX<GT>(e)) outs () << "(> ";
+        if (isOpX<NEQ>(e)) outs () << "(distinct ";
+        print(e->left());
+        outs () << " ";
+        print(e->right());
+        outs () << ")";
+      }
+      else if (isOpX<ITE>(e))
+      {
+        outs () << "(ite ";
+        print(e->left());
+        outs () << " ";
+        print(e->right());
+        outs () << " ";
+        print(e->last());
+        outs () << ")";
+      }
+      else
+      {
+        outs () << z3.toSmtLib (e);
+      }
+    }
+
     void serialize_formula(Expr form)
     {
       smt.reset();
@@ -303,8 +414,20 @@ namespace ufo
     template <typename T> void serialize_formula(T& forms)
     {
       smt.reset();
-      for (auto form : forms) smt.assertExpr(form);
-      smt.toSmtLib (outs());
+      for (auto form : forms)
+      {
+        assert(isOpX<EQ>(form));
+        outs () << "(define-fun " << *form->left() << " (";
+        ExprVector allVars;
+        filter (form->right(), bind::IsConst (), back_inserter (allVars));
+        for (auto & b : allVars)
+        {
+          outs () << "(" << *b << " " << varType(b) << ")";
+        }
+        outs () << ") " << varType(form->left()) << "\n  ";
+        print(form->right());
+        outs () << ")\n";
+      }
       outs().flush ();
     }
   };

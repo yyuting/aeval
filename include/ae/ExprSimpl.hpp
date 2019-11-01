@@ -226,6 +226,14 @@ namespace ufo
     {
       return term->arg(0);
     }
+    else if (isOpX<FALSE>(term))
+    {
+      return mk<TRUE>(term->getFactory());
+    }
+    else if (isOpX<TRUE>(term))
+    {
+      return mk<FALSE>(term->getFactory());
+    }
     else if (isOpX<AND>(term) || isOpX<OR>(term))
     {
       ExprSet args;
@@ -240,6 +248,20 @@ namespace ufo
       return reBuildNegCmp(term, term->arg(0), term->arg(1));
     }
     return mk<NEG>(term);
+  }
+
+  bool isNumeric(Expr a)
+  {
+    // don't consider ITE-s
+    return (isOp<NumericOp>(a) || isOpX<MPZ>(a) || isOpX<MPQ>(a) ||
+            bind::isIntConst(a) || bind::isRealConst(a));
+  }
+
+  bool isBoolean(Expr a)
+  {
+    if (isOpX<ITE>(a)) return isBoolean(a->last());
+    return (isOpX<AND>(a) || isOpX<OR>(a) || isOpX<IMPL>(a) || isOpX<NEG>(a) || isOpX<IFF>(a) ||
+            isOp<ComparissonOp>(a) || bind::isBoolConst(a));
   }
 
   /**
@@ -618,7 +640,7 @@ namespace ufo
     RW (std::shared_ptr<T> r) : _r(r) {}
     RW (T *r) : _r (r) {}
 
-    
+
     VisitAction operator() (Expr exp)
     {
       // -- apply the rewriter
@@ -718,6 +740,168 @@ namespace ufo
     return ret;
   }
 
+  inline static Expr reBuildCmp(Expr term, Expr lhs, Expr rhs)
+  {
+    if (isOpX<EQ>(term)){
+      return mk<EQ>(lhs, rhs);
+    }
+    if (isOpX<NEQ>(term)){
+      return mk<NEQ>(lhs, rhs);
+    }
+    if (isOpX<LEQ>(term)){
+      return mk<LEQ>(lhs, rhs);
+    }
+    if (isOpX<GEQ>(term)){
+      return mk<GEQ>(lhs, rhs);
+    }
+    if (isOpX<LT>(term)){
+      return mk<LT>(lhs, rhs);
+    }
+    assert(isOpX<GT>(term));
+    return mk<GT>(lhs, rhs);
+  }
+
+  inline static bool evaluateCmpConsts(Expr term)
+  {
+    if (!isOpX<MPZ>(term->left()) || !isOpX<MPZ>(term->right()))
+      return false;
+    int a = lexical_cast<int>(term->left());
+    int b = lexical_cast<int>(term->right());
+    if (isOpX<EQ>(term))
+    {
+      return (a == b);
+    }
+    if (isOpX<NEQ>(term))
+    {
+      return (a != b);
+    }
+    if (isOpX<LEQ>(term))
+    {
+      return (a <= b);
+    }
+    if (isOpX<GEQ>(term))
+    {
+      return (a >= b);
+    }
+    if (isOpX<LT>(term))
+    {
+      return (a < b);
+    }
+    assert(isOpX<GT>(term));
+    return (a > b);
+  }
+
+  inline static int separateConst(ExprVector& plsOps)
+  {
+    int c = 0;
+    for (auto it = plsOps.begin(); it != plsOps.end(); )
+    {
+      if (isOpX<MPZ>(*it))
+      {
+        c += lexical_cast<int>(*it);
+        it = plsOps.erase(it);
+        continue;
+      }
+      else ++it;
+    }
+    return c;
+  }
+
+  inline static Expr simplifyPlus (Expr exp){
+    ExprVector plsOps;
+    getPlusTerms (exp, plsOps);
+    // GF: to extend
+    int c = separateConst(plsOps);
+    if (c != 0) plsOps.push_back(mkTerm (mpz_class (c), exp->getFactory()));
+    return mkplus(plsOps, exp->getFactory());
+  }
+
+  inline static Expr simplifyIte (Expr exp)  // simple version, on the syntactic level
+  {
+    ExprFactory &efac = exp->getFactory();
+    ExprVector plusOpsLeft;
+    ExprVector plusOpsRight;
+    getPlusTerms(exp->right(), plusOpsLeft);
+    getPlusTerms(exp->last(), plusOpsRight);
+
+    ExprVector commonTerms;
+    for (auto it1 = plusOpsLeft.begin(); it1 != plusOpsLeft.end(); )
+    {
+      bool found = false;
+      for (auto it2 = plusOpsRight.begin(); it2 != plusOpsRight.end(); )
+      {
+        if (*it1 == *it2)
+        {
+          if (lexical_cast<string>(*it1) != "0")
+            commonTerms.push_back(*it1);
+          found = true;
+          plusOpsRight.erase(it2);
+          break;
+        }
+        else
+        {
+          ++it2;
+        }
+      }
+      if (found) it1 = plusOpsLeft.erase(it1);
+      else ++it1;
+    }
+
+    Expr b1 = mkplus(plusOpsLeft, efac);
+    Expr b2 = mkplus(plusOpsRight, efac);
+    if (b1 == b2)
+    {
+      if (lexical_cast<string>(b1) != "0")
+        commonTerms.push_back(b1);
+    }
+    else
+    {
+      commonTerms.push_back(mk<ITE>(exp->left(), b1, b2));
+    }
+    return mkplus(commonTerms, efac);
+  }
+
+  inline static Expr simplifyCmp (Expr exp)
+  {
+    ExprFactory &efac = exp->getFactory();
+    if (evaluateCmpConsts(exp)) return mk<TRUE>(efac);
+
+    ExprVector plusOpsLeft;
+    ExprVector plusOpsRight;
+    getPlusTerms(exp->left(), plusOpsLeft);
+    getPlusTerms(exp->right(), plusOpsRight);
+
+    int c1 = separateConst(plusOpsLeft);
+    int c2 = separateConst(plusOpsRight);
+
+    for (auto it1 = plusOpsLeft.begin(); it1 != plusOpsLeft.end(); )
+    {
+      bool found = false;
+      for (auto it2 = plusOpsRight.begin(); it2 != plusOpsRight.end(); )
+      {
+        if (*it1 == *it2)
+        {
+          found = true;
+          plusOpsRight.erase(it2);
+          break;
+        }
+        else
+        {
+          ++it2;
+        }
+      }
+      if (found) it1 = plusOpsLeft.erase(it1);
+      else ++it1;
+    }
+
+    if (c1 > c2)
+      plusOpsLeft.push_back(mkTerm (mpz_class (c1 - c2), efac));
+    else if (c1 < c2)
+      plusOpsRight.push_back(mkTerm (mpz_class (c2 - c1), efac));
+
+    return reBuildCmp(exp, mkplus(plusOpsLeft, efac), mkplus(plusOpsRight, efac));
+  }
+
   struct SimplifyArithmExpr
   {
     ExprFactory &efac;
@@ -738,7 +922,7 @@ namespace ufo
     {
       if (isOpX<PLUS>(exp))
       {
-        return simplifiedPlus(exp, zero);
+        return simplifyPlus(exp);
       }
 
       if (isOpX<MINUS>(exp) && exp->arity() == 2)
@@ -774,9 +958,21 @@ namespace ufo
       {
         if (isOpX<UN_MINUS>(exp->right())) return mk<PLUS>(exp->left(), exp->right()->left());
       }
+
+      if (isOp<ComparissonOp>(exp) && isNumeric(exp->right()))
+      {
+        return simplifyCmp(exp);
+      }
+
+      if (isOpX<ITE>(exp) && isNumeric(exp->right()))
+      {
+        return simplifyIte(exp);
+      }
       return exp;
     }
   };
+
+  inline static Expr simplifyBool (Expr exp);
 
   struct SimplifyBoolExpr
   {
@@ -788,17 +984,17 @@ namespace ufo
     {
       // GF: to enhance
 
-      if (isOpX<OR>(exp)){
-        for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          if (isOpX<TRUE>(*it)) return mk<TRUE>(efac);
-          if (isOpX<EQ>(*it) && (*it)->left() == (*it)->right()) return mk<TRUE>(efac);
-        }
-      }
+      if (isOpX<IMPL>(exp))
+      {
+        if (isOpX<TRUE>(exp->right()))
+          return mk<TRUE>(efac);
 
-      if (isOpX<AND>(exp)){
-        for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          if (isOpX<FALSE>(*it)) return mk<FALSE>(efac);
-        }
+        if (isOpX<FALSE>(exp->right()))
+          return mk<NEG>(exp->left());
+
+        return (mk<OR>(
+                 mk<NEG>(exp->left()),
+                 exp->right()));
       }
 
       if (isOpX<EQ>(exp)){
@@ -808,10 +1004,42 @@ namespace ufo
         if (isOpX<FALSE>(exp->right())) return mkNeg(exp->right());
       }
 
-      if (isOpX<IMPL>(exp)){
-        if (isOpX<TRUE>(exp->left())) return exp->right();
-        if (isOpX<FALSE>(exp->left())) return mk<TRUE>(exp->getFactory());
-        return mk<OR>(mkNeg(exp->left()), exp->right());
+      if (isOpX<OR>(exp))
+      {
+        ExprSet dsjs;
+        ExprSet newDsjs;
+        getDisj(exp, dsjs);
+        for (auto & a : dsjs){
+          if (isOpX<TRUE>(a))
+          {
+            return mk<TRUE>(efac);
+          }
+          if (isOpX<FALSE>(a))
+          {
+            continue;
+          }
+          newDsjs.insert(simplifyBool(a));
+        }
+        return disjoin (newDsjs, efac);
+      }
+
+      if (isOpX<AND>(exp))
+      {
+        ExprSet cnjs;
+        ExprSet newCnjs;
+        getConj(exp, cnjs);
+        for (auto & a : cnjs){
+          if (isOpX<FALSE>(a))
+          {
+            return mk<FALSE>(efac);
+          }
+          if (isOpX<TRUE>(a))
+          {
+            continue;
+          }
+          newCnjs.insert(simplifyBool(a));
+        }
+        return conjoin (newCnjs, efac);
       }
 
       if (isOpX<ITE>(exp)){
@@ -832,7 +1060,16 @@ namespace ufo
         {
           return mkNeg(cond);
         }
+        else if (exp->arg(1) == exp->arg(2))
+        {
+          return exp->arg(1);
+        }
       }
+
+      if (isOpX<NEG>(exp) &&
+        (isOp<ComparissonOp>(exp->left()) ||
+        isOpX<TRUE>(exp->left()) || isOpX<FALSE>(exp->left())))
+        return mkNeg(exp->left());
 
       return exp;
     }
@@ -1065,53 +1302,6 @@ namespace ufo
     return c.size();
   }
 
-  // not very pretty method, but..
-  inline static Expr reBuildCmp(Expr term, Expr lhs, Expr rhs)
-  {
-    if (isOpX<EQ>(term)){
-      return mk<EQ>(lhs, rhs);
-    }
-    if (isOpX<NEQ>(term)){
-      return mk<NEQ>(lhs, rhs);
-    }
-    if (isOpX<LEQ>(term)){
-      return mk<LEQ>(lhs, rhs);
-    }
-    if (isOpX<GEQ>(term)){
-      return mk<GEQ>(lhs, rhs);
-    }
-    if (isOpX<LT>(term)){
-      return mk<LT>(lhs, rhs);
-    }
-    assert(isOpX<GT>(term));
-    return mk<GT>(lhs, rhs);
-  }
-
-  inline static Expr simplIneqMover(Expr exp)
-  {
-    exp = ineqNegReverter(exp);
-    if (lexical_cast<string>(exp->right()) == "0") return exp;
-
-    // GF: find a better way how to move things
-    exp = reBuildCmp(exp, simplifiedMinus(exp->left(), exp->right()),
-                     mkTerm (mpz_class (0), exp->getFactory()));
-    return exp;
-  }
-
-  bool isNumeric(Expr a)
-  {
-    // don't consider ITE-s
-    return (isOp<NumericOp>(a) || isOpX<MPZ>(a) || isOpX<MPQ>(a) ||
-             bind::isIntConst(a) || bind::isRealConst(a));
-  }
-
-  bool isBoolean(Expr a)
-  {
-    if (isOpX<ITE>(a)) return isBoolean(a->last());
-    return (isOpX<AND>(a) || isOpX<OR>(a) || isOpX<IMPL>(a) || isOpX<NEG>(a) || isOpX<IFF>(a) ||
-            isOp<ComparissonOp>(a) || bind::isBoolConst(a));
-  }
-
   Expr projectITE(Expr ite, Expr var)
   {
     if (isOpX<ITE>(ite))
@@ -1181,6 +1371,62 @@ namespace ufo
       EqBoolMiner trm (var, eqs);
       dagVisit (trm, exp);
     }
+  }
+
+  struct QVMiner : public std::unary_function<Expr, VisitAction>
+  {
+    map<Expr, ExprVector>& vars;
+    QVMiner (map<Expr, ExprVector>& _vars): vars(_vars) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if (isOpX<FORALL>(exp) || isOpX<EXISTS>(exp))
+      {
+        for (int i = 0; i < exp->arity() - 1; i++)
+          vars[exp].push_back(bind::fapp(exp->arg(i)));
+
+        reverse(vars[exp].begin(),vars[exp].end());
+
+        for (auto & a : vars)
+          if (contains(a.first, exp) && a.first != exp)
+            vars[exp].insert(vars[exp].end(), a.second.begin(), a.second.end());
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline void getQVars (Expr exp, map<Expr, ExprVector>& vars)
+  {
+    QVMiner qvm (vars);
+    dagVisit (qvm, exp);
+  }
+
+  struct QFregularizer
+  {
+    ExprVector& vars;
+    QFregularizer (ExprVector& _vars): vars(_vars){};
+    Expr operator() (Expr exp)
+    {
+      if (bind::isBVar(exp)) return vars[bind::bvarId(exp)];
+      return exp;
+    }
+  };
+
+  inline static Expr regularizeQF (Expr exp)
+  {
+    map<Expr, ExprVector> vars;
+    getQVars(exp, vars);
+    ExprMap replaced;
+    for (auto & a : vars)
+    {
+      Expr sub = replaceAll(a.first, replaced);
+      RW<QFregularizer> rw(new QFregularizer(a.second));
+      Expr b = dagVisit (rw, sub);
+      replaced[a.first] = b;
+      exp = replaceAll(exp, sub, b);
+    }
+
+    return exp;
   }
 }
 

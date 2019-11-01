@@ -2728,6 +2728,18 @@ namespace expr
       }
     };
 
+    struct RAVALLM: public std::unary_function<Expr,VisitAction>
+    {
+      ExprMap& m;
+
+      RAVALLM (ExprMap& _m) : m(_m) { }
+      VisitAction operator() (Expr exp) const
+      {
+        if (m[exp] != NULL) return VisitAction::changeTo (m[exp]);
+        return VisitAction::doKids ();
+      }
+    };
+
     struct RAVSIMP: public std::unary_function<Expr,VisitAction>
     {
       Expr s;
@@ -2872,7 +2884,8 @@ namespace expr
       
       VisitAction operator() (Expr exp)
       {
-	count++;
+        if (isOp<ComparissonOp>(exp) || isOp<BoolOp>(exp))
+          if (!isOpX<TRUE>(exp) && !isOpX<FALSE>(exp)) count++;
 	return VisitAction::doKids ();
       }
     };
@@ -2936,6 +2949,13 @@ namespace expr
   {
     assert(s.size() == t.size());
     RAVALL rav(&s, &t);
+    return dagVisit (rav, exp);
+  }
+
+  // pairwise replacing
+  inline Expr replaceAll (Expr exp, ExprMap& m)
+  {
+    RAVALLM rav(m);
     return dagVisit (rav, exp);
   }
 

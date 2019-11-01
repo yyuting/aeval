@@ -342,8 +342,8 @@ namespace ufo
       outs () << ")\n";
 
       if (debug){
-        outs () << "Sanity check [model, S-part]: " << !(u.isSat(mk<NEG>(s_witn))) << "\n";
-        outs () << "Sanity check [model, T-part]: " << !(u.isSat(t_witn)) << "\n";
+        outs () << "Sanity check [model, S-part]: " << !((bool)(u.isSat(mk<NEG>(s_witn)))) << "\n";
+        outs () << "Sanity check [model, T-part]: " << !((bool)(u.isSat(t_witn))) << "\n";
       }
     }
 
@@ -1389,13 +1389,28 @@ namespace ufo
    */
   inline void aeSolveAndSkolemize(Expr s, Expr t, bool skol, bool debug, bool compact, bool split)
   {
-    ExprSet s_vars;
-    ExprSet t_vars;
+    ExprSet t_quantified;
+    if (t == NULL)
+    {
+      if (!(isOpX<FORALL>(s) && isOpX<EXISTS>(s->last()))) exit(0);
 
-    filter (s, bind::IsConst (), inserter (s_vars, s_vars.begin()));
-    filter (t, bind::IsConst (), inserter (t_vars, t_vars.begin()));
+      s = regularizeQF(s);
+      t = s->last()->last();
+      for (int i = 0; i < s->last()->arity() - 1; i++)
+        t_quantified.insert(bind::fapp(s->last()->arg(i)));
 
-    ExprSet t_quantified = minusSets(t_vars, s_vars);
+      s = mk<TRUE>(s->getFactory());
+    }
+    else
+    {
+      ExprSet s_vars;
+      ExprSet t_vars;
+
+      filter (s, bind::IsConst (), inserter (s_vars, s_vars.begin()));
+      filter (t, bind::IsConst (), inserter (t_vars, t_vars.begin()));
+
+      t_quantified = minusSets(t_vars, s_vars);
+    }
 
     s = convertIntsToReals<DIV>(s);
     t = convertIntsToReals<DIV>(t);
@@ -1426,7 +1441,7 @@ namespace ufo
       outs () << "Iter: " << ae.getPartitioningSize() << "; Result: invalid\n";
       ae.printModelNeg();
       outs() << "\nvalid subset:\n";
-      u.serialize_formula(ae.getValidSubset(compact));
+      u.serialize_formula(simplifyBool(simplifyArithm(ae.getValidSubset(compact))));
     } else {
       outs () << "Iter: " << ae.getPartitioningSize() << "; Result: valid\n";
       if (skol)
@@ -1435,7 +1450,8 @@ namespace ufo
         if (split)
         {
           ExprVector sepSkols;
-          for (auto & evar : t_quantified) sepSkols.push_back(mk<EQ>(evar, ae.getSeparateSkol(evar)));
+          for (auto & evar : t_quantified) sepSkols.push_back(mk<EQ>(evar,
+                           simplifyBool(simplifyArithm(ae.getSeparateSkol(evar)))));
           u.serialize_formula(sepSkols);
           if (debug) outs () << "Sanity check [split]: " <<
             u.implies(mk<AND>(s, conjoin(sepSkols, s->getFactory())), t_orig) << "\n";
@@ -1443,7 +1459,7 @@ namespace ufo
         else
         {
           outs() << "\nextracted skolem:\n";
-          u.serialize_formula(skol);
+          u.serialize_formula(simplifyBool(simplifyArithm(skol)));
           if (debug) outs () << "Sanity check: " << u.implies(mk<AND>(s, skol), t_orig) << "\n";
         }
       }
