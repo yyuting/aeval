@@ -363,7 +363,6 @@ namespace ufo
       for (auto & a : all) negged.push_back(additiveInverse(a));
       return mkplus(negged, e->getFactory());
     }
-    outs () << "additive inverse for " << *e << "\n";
     return mk<MULT>(mkTerm (mpq_class (-1), e->getFactory()), e);
   }
 
@@ -1238,6 +1237,8 @@ namespace ufo
   {
     SelectStoreRewriter () {};
 
+    ExprSet unusedSelects;
+
     Expr operator() (Expr exp)
     {
       if (isOpX<SELECT>(exp) && isOpX<STORE>(exp->left()))
@@ -1248,13 +1249,43 @@ namespace ufo
           return mk<ITE>(mk<EQ>(exp->right(), exp->left()->right()),
              exp->left()->last(), mk<SELECT>(exp->left()->left(), exp->right()));
       }
-      else if (isOpX<EQ>(exp) && isOpX<STORE>(exp->left()))
+      else if (isOpX<EQ>(exp))
       {
-        return mk<EQ>(exp->left()->last(), mk<SELECT>(exp->right(), exp->left()->right()));
+        Expr exprStore;
+        Expr exprArr;
+        if (isOpX<STORE>(exp->left()))
+        {
+          exprStore = exp->left();
+          exprArr = exp->right();
+        }
+        else if (isOpX<STORE>(exp->right()))
+        {
+          exprStore = exp->right();
+          exprArr = exp->left();
+        }
+
+        if (exprStore != NULL && exprArr != NULL)
+        {
+          ExprSet all;
+          all.insert(mk<EQ>(exprStore->last(), mk<SELECT>(exprArr, exprStore->right())));
+          ExprSet nested;
+          for (auto rit = unusedSelects.rbegin(); rit != unusedSelects.rend(); ++rit)
+          {
+            Expr a = *rit;
+            Expr elem = a->right();
+            if (contains(exprStore, a) && exprStore != a &&
+                find(nested.begin(), nested.end(), elem) == nested.end())
+            {
+              nested.insert(elem); // to avoid over-writing cells
+              all.insert(mk<EQ>(a->last(), mk<SELECT>(exprArr, elem)));
+            }
+          }
+          return conjoin(all, exp->getFactory());
+        }
       }
-      else if (isOpX<EQ>(exp) && isOpX<STORE>(exp->right()))
+      else if (isOpX<STORE>(exp))
       {
-        return mk<EQ>(exp->right()->last(), mk<SELECT>(exp->left(), exp->right()->right()));
+        unusedSelects.insert(exp);
       }
       return exp;
     }
@@ -1270,6 +1301,8 @@ namespace ufo
   {
     if (isOpX<SELECT>(a) || isOpX<STORE>(a)){
       cntrs.insert(a->right());
+      if (isOpX<STORE>(a))
+        getCounters(a->left(), cntrs);
     } else {
       for (unsigned i = 0; i < a->arity(); i++)
         getCounters(a->arg(i), cntrs);

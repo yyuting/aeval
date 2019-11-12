@@ -172,9 +172,9 @@ namespace ufo
           argsBase.push_back(v);
         }
         if (bind::typeOf(v) == adtType)
-          argsInd.push_back(indCon);   // unprimed
+          argsInd.push_back(indCon);   // use the app of the constructor(s) as argument
         else
-          argsInd.push_back(v);
+          argsInd.push_back(v);        // use unprimed versions of other variables
       }
 
       types.push_back (mk<BOOL_TY> (efac));
@@ -187,30 +187,40 @@ namespace ufo
       u.serialize_formula(baseRule);
 
       // prepare for the inductive rule construction
-      ExprSet counters;
-      getCounters (opsArr[stateProducingOp], counters);
-      assert(counters.size() == 1); // GF: to extend when needed
-      Expr counter = *counters.begin();
+      ExprSet indexVars;
+      getCounters (opsArr[stateProducingOp], indexVars);
+      Expr indexVar = *indexVars.begin(); // proceed with the least one
       Expr accessTerm;
 
-      // identify how elements in the arrays are accessed (i.e., the counter)
+      // identify how elements in the arrays are accessed (i.e., the indexVar)
+      // and what content is stored to the array
       ExprSet transitions;
+      map<Expr, ExprSet> arrayContent;
       getConj(opsArr[stateProducingOp], transitions);
       for (auto tr : transitions)
       {
-        if (contains (tr, counter) && !containsOp<ARRAY_TY>(tr))
+        if (contains (tr, indexVar) && !containsOp<ARRAY_TY>(tr))
         {
           tr = normalizeArithm(tr);
-          tr = ineqSimplifier(counter, tr);
-          assert(tr->left() == counter);
+          tr = ineqSimplifier(indexVar, tr);
+          assert(tr->left() == indexVar);
           accessTerm = replaceAll(tr->right(), varVersionsInverse);
-          break;
+        }
+        else
+        {
+          ExprSet cnj;
+          getConj(rewriteSelectStore(tr), cnj);
+          for (auto & a : cnj)
+          {
+            if (isOpX<EQ>(a) && isOpX<SELECT>(a->right()))
+              arrayContent[a->left()].insert(a->right()->last());
+          }
         }
       }
 
       assert(accessTerm != NULL);
 
-      // calculate the least fixedpoint over the counter variable
+      // calculate the least fixedpoint over the indexVar variable
       // currently, a simple heuristic is used, but it can be extended
       ExprSet guesses;
       mutateHeuristic (baseFormula, guesses);
@@ -235,12 +245,22 @@ namespace ufo
       Expr remainingCnj = mk<AND>(invariant, mkNeg(baseFormula));
 
       // prepare for the nested call of R in the inductive rule of R
-      Expr freshElem; // GF: to extend to ExprSet when needed
-      Expr prevAdt;
-      for (int j = 1; j < indCon->arity(); j++)
+      ExprSet nonstateVars;
+      while (true)
       {
-        if (adtType == bind::typeOf(indCon->arg(j))) prevAdt = indCon->arg(j);
-        else freshElem = indCon->arg(j);
+        int nestedInd = -1;
+        for (int j = 1; j < indCon->arity(); j++)
+        {
+          if (adtType == bind::typeOf(indCon->arg(j)))
+          {
+            if (isOpX<FAPP>(indCon->arg(j)) && isIndConstructor(indCon->arg(j)->left(), adtType))
+              nestedInd = j;
+          }
+          else
+            nonstateVars.insert(indCon->arg(j));
+        }
+        if (nestedInd == -1) break;
+        else indCon = indCon->arg(nestedInd);
       }
       int arrVarInd = -1;
       for (int j = 0; j < types.size(); j++) if (isOpX<ARRAY_TY>(types[j])) arrVarInd = j;
@@ -249,15 +269,22 @@ namespace ufo
       ExprVector argsIndNested = argsInd;
       for (int j = 0; j < types.size(); j++)
       {
-        if (isOpX<AD_TY>(types[j])) argsIndNested[j] = prevAdt;
-        if (argsInd[j] == counter
-              /*types[j] == bind::typeOf(counter)*/) argsIndNested[j] = accessTerm;
+        if (isOpX<AD_TY>(types[j])) argsIndNested[j] = vars[j];
+        if (argsInd[j] == indexVar
+              /*types[j] == bind::typeOf(indexVar)*/) argsIndNested[j] = accessTerm;
       }
 
       // prepare the inductive definition of R (i.e., the RHS of the inductive rule)
       ExprSet cnjs;
       cnjs.insert(bind::fapp (rel, argsIndNested));
-      cnjs.insert(mk<EQ>(freshElem, mk<SELECT>(vars[arrVarInd], accessTerm)));
+      for (auto & a : nonstateVars)   // need to match all non-state vars
+      {                               // (obtained from the array and the ADT)
+        for (auto & b : arrayContent[a])
+        {
+          Expr accessTermTmp = normalizeArithm(replaceAll(accessTerm, indexVar, b));
+          cnjs.insert(mk<EQ>(a, mk<SELECT>(vars[arrVarInd], accessTermTmp)));
+        }
+      }
       cnjs.insert(remainingCnj);
       Expr inductiveDef = mk<EQ>(bind::fapp (rel, argsInd), conjoin(cnjs, efac));
 
@@ -286,9 +313,9 @@ namespace ufo
     for (auto & a : z3.getAdtConstructors()) constructors.push_back(a);
     ExprVector opsAdt;
     ExprVector opsArr;
-    if (containsOp<AD_TY>(s1))
+    if (containsOp<ARRAY_TY>(s2))
     {
-      assert(containsOp<ARRAY_TY>(s2));
+      assert(containsOp<AD_TY>(s1));
       getConj(s1, opsAdt);
       getConj(s2, opsArr);
     }
