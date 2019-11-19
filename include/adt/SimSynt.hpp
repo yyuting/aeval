@@ -30,6 +30,10 @@ namespace ufo
     Expr baseFormula;
     int stateProducingOp = -1;
     int stateConsumingOp = -1;
+    int arrVarInd = -1;
+    int indexVarInd = -1;
+    int adtVarInd = -1;
+    ExprVector nonstateVars;
 
     void getVarVersions(Expr op)
     {
@@ -245,7 +249,6 @@ namespace ufo
       Expr remainingCnj = mk<AND>(invariant, mkNeg(baseFormula));
 
       // prepare for the nested call of R in the inductive rule of R
-      ExprSet nonstateVars;
       while (true)
       {
         int nestedInd = -1;
@@ -257,13 +260,17 @@ namespace ufo
               nestedInd = j;
           }
           else
-            nonstateVars.insert(indCon->arg(j));
+            nonstateVars.push_back(indCon->arg(j));
         }
         if (nestedInd == -1) break;
         else indCon = indCon->arg(nestedInd);
       }
-      int arrVarInd = -1;
-      for (int j = 0; j < types.size(); j++) if (isOpX<ARRAY_TY>(types[j])) arrVarInd = j;
+
+      // aux vars for indexes
+      for (int j = 0; j < types.size(); j++)
+        if (isOpX<ARRAY_TY>(types[j])) arrVarInd = j;
+        else if (types[j] == adtType) adtVarInd = j;
+        else if (vars[j] == indexVar) indexVarInd = j;
 
       // get arguments of the nested call of R
       ExprVector argsIndNested = argsInd;
@@ -276,21 +283,59 @@ namespace ufo
 
       // prepare the inductive definition of R (i.e., the RHS of the inductive rule)
       ExprSet cnjs;
-      cnjs.insert(bind::fapp (rel, argsIndNested));
       for (auto & a : nonstateVars)   // need to match all non-state vars
       {                               // (obtained from the array and the ADT)
-        for (auto & b : arrayContent[a])
-        {
-          Expr accessTermTmp = normalizeArithm(replaceAll(accessTerm, indexVar, b));
-          cnjs.insert(mk<EQ>(a, mk<SELECT>(vars[arrVarInd], accessTermTmp)));
-        }
+        auto it = arrayContent[a].begin();
+        if (it == arrayContent[a].end()) continue;
+        Expr accessTermTmp = normalizeArithm(replaceAll(accessTerm, indexVar, *it));
+        cnjs.insert(mk<EQ>(a, mk<SELECT>(vars[arrVarInd], accessTermTmp)));
+        arrayContent[a].erase(it);
       }
       cnjs.insert(remainingCnj);
       Expr inductiveDef = mk<EQ>(bind::fapp (rel, argsInd), conjoin(cnjs, efac));
 
       // create a quantified formula representing the inductive rule
-      Expr indRule = createQuantifiedFormula(inductiveDef);
+      Expr indRule = createQuantifiedFormula(generalizeInductiveDef(rel, argsInd, argsIndNested, cnjs));
       u.serialize_formula(indRule);
+    }
+
+    Expr generalizeInductiveDef(Expr rel, ExprVector& argsInd, ExprVector& argsIndNested, ExprSet& cnjs)
+    {
+      Expr all = mkTerm (mpz_class (nonstateVars.size()), efac);
+      ExprSet pre;
+
+      // nonstateVars computed by the recursive traversal of indCon
+      // so it is safe to look at them here instead of looking at indCon again
+      for (int i = 0; i < nonstateVars.size(); i++)
+      {
+        Expr cur = mkTerm (mpz_class (i + 1), efac);
+        Expr a = mk<EQ>(nonstateVars[i], mk<SELECT>(argsInd[arrVarInd],
+                        mk<MINUS>(argsInd[indexVarInd], cur)));
+        bool res = false;
+        for (auto it = cnjs.begin(); it != cnjs.end(); )
+        {
+          if (u.implies(*it, a))
+          {
+            res = true;
+            cnjs.erase(it);
+            break;
+          }
+          else ++it;
+        }
+        if (!res)
+          pre.insert(mk<EQ>(mk<MOD>(argsInd[indexVarInd], all), mkTerm (mpz_class (i), efac)));
+      }
+
+      if (u.isTrue(mk<EQ>(argsIndNested[indexVarInd], mk<MINUS>(argsInd[indexVarInd], all))))
+      {
+        Expr newDecrement = mk<MINUS>(argsInd[indexVarInd], mkTerm (mpz_class (1), efac));
+        pre.insert(mk<EQ>(mk<SELECT>(argsInd[arrVarInd], newDecrement), nonstateVars.back()));
+        cnjs.insert(disjoin(pre, efac));
+        argsInd[adtVarInd] = indCon;
+        argsIndNested[indexVarInd] = newDecrement;
+      }
+      cnjs.insert(bind::fapp (rel, argsIndNested));
+      return mk<EQ>(bind::fapp (rel, argsInd), conjoin(cnjs, efac));
     }
   };
 
