@@ -107,7 +107,7 @@ namespace ufo
           {
             Expr def = c->last()->right();
             for (auto & a : recDefsNu)
-              if (contains (def, a.first)) exit(0);
+              if (contains (def, a.first->left())) exit(0);
             recDefsMu[c->last()->left()] = def;
             muVar = var;
           }
@@ -115,7 +115,7 @@ namespace ufo
           {
             Expr def = c->last()->right();
             for (auto & a : recDefsMu)
-              if (contains (def, a.first)) exit(0);
+              if (contains (def, a.first->left())) exit(0);
             recDefsNu[c->last()->left()] = def;
             nuVar = var;
           }
@@ -207,13 +207,15 @@ namespace ufo
       }
 
       Expr comm = conjoin(commonSubset, efac);
+
       ExprSet toSearchRem;
       Expr matchNeedToBeFound;
 
+      if (u.isFalse(comm)) comm = mk<TRUE>(efac);
       if (isOpX<TRUE>(comm))
       {
         // try to simplify further
-        fla = resolve(fla);
+        fla = expandDisjSubexpr(fla);
         flaUpdDisj.clear();
         getDisj(fla, flaUpdDisj);
       }
@@ -243,7 +245,7 @@ namespace ufo
 
         if (!u.implies(mkNeg(comm), disjoin(flaUpdDisj, efac)))
         {
-          //outs () << "unable to create abstraction\n";
+          // outs () << "unable to create abstraction\n";
           return false;
         }
 
@@ -294,12 +296,9 @@ namespace ufo
             if (findMatchingSubexpr (a, d, av, matching1))
             {
               for (auto & m : matching1)
-              {
-                if (m.first!=NULL && m.second != NULL && forallMatching[m.first] == NULL )
-                {
+                if (m.first!=NULL && m.second != NULL && forallMatching[m.first] == NULL)
                   forallMatching[m.first] = m.second;
-                }
-              }
+
               used.insert(*it2);
               it2 = flaUpdDisj.erase(it2);
               found = true;
@@ -321,17 +320,43 @@ namespace ufo
           }
         if (!sanityCheck) return false;
 
-        if (!flaOrigDisj.empty() && !toSearchRem.empty())
+        Expr extr;
+        if (!flaUpdDisj.empty())
         {
-          Expr whatsLeft = replaceAll(disjoin(flaOrigDisj, efac), forallMatching);
-          if (!u.implies(whatsLeft, disjoin(toSearchRem, efac))) return false;
-          flaUpdDisj.clear();
+          if (flaOrigDisj.empty())
+          {
+            extr = disjoin(flaUpdDisj, efac);
+          }
+          else
+          {
+            Expr whatsLeftOrig = replaceAll(disjoin(flaOrigDisj, efac), forallMatching);
+            Expr whatsLeftUpd = disjoin(flaUpdDisj, efac);
+            for (auto & a : recDefsNu)
+              if (contains (whatsLeftOrig, a.first->left())) return false;
+            for (auto & a : recDefsMu)
+              if (contains (whatsLeftOrig, a.first->left())) return false;
+
+            if (!u.implies(whatsLeftOrig, whatsLeftUpd))
+            {
+              if (u.implies(whatsLeftUpd, whatsLeftOrig))
+                extr = disjoin(flaUpdDisj, efac);
+              else
+                return false;
+            }
+            flaUpdDisj.clear();
+          }
         }
 
         if (isOpX<TRUE>(comm))
         {
-          fla = replaceAll(flaForall, flaForall->last(),
-                           mk<EQ>(flaOrig->left(),  replaceAll(flaRel, forallMatching)));
+          if (extr == NULL)
+          {
+            fla = replaceAll(flaForall, flaForall->last(),
+                           mk<EQ>(flaOrig->left(), replaceAll(flaRel, forallMatching)));
+          } else {
+            fla = replaceAll(flaForall, flaForall->last(),
+                             mk<EQ>(flaOrig->left(), mk<OR>(extr, replaceAll(flaRel, forallMatching))));
+          }
         }
         else
         {

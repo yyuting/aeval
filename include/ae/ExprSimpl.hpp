@@ -629,6 +629,13 @@ namespace ufo
         ps.insert(mk<AND>(a, b));
   }
 
+  inline static void expandDisjHlp (ExprSet& as, ExprSet& bs, ExprSet& ps)
+  {
+    for (auto &a : as)
+      for (auto &b : bs)
+        ps.insert(mk<OR>(a, b));
+  }
+
   static Expr simplifyBool (Expr exp);
 
   // (a \/ b) /\ (c \/ d \/ e) /\ f =>
@@ -663,6 +670,35 @@ namespace ufo
     return simplifyBool(disjoin (newer, exp->getFactory()));
   }
 
+  inline static Expr expandDisj(Expr exp)
+  {
+    ExprSet dsj;
+    getDisj(exp, dsj);
+    if (dsj.size() == 1)
+      return disjoin(dsj, exp->getFactory());
+
+    vector<ExprSet> cnjs;
+    for (auto &a : dsj)
+    {
+      ExprSet cnj;
+      getConj(a, cnj);
+      cnjs.push_back(cnj);
+    }
+
+    ExprSet older;
+    expandDisjHlp(cnjs[0], cnjs[1], older);
+
+    ExprSet newer = older;
+    for (int i = 2; i < dsj.size(); i++)
+    {
+      newer.clear();
+      expandDisjHlp(cnjs[i], older, newer);
+      older = newer;
+    }
+
+    return simplifyBool(conjoin (newer, exp->getFactory()));
+  }
+
   struct ExpandConjExpr
   {
     ExpandConjExpr (){};
@@ -676,9 +712,28 @@ namespace ufo
     }
   };
 
+  struct ExpandDisjExpr
+  {
+    ExpandDisjExpr (){};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<OR>(exp) && containsOp<AND>(exp))
+        return expandDisj(exp);
+      else
+        return exp;
+    }
+  };
+
   inline static Expr expandConjSubexpr (Expr exp)
   {
     RW<ExpandConjExpr> rw(new ExpandConjExpr());
+    return dagVisit (rw, exp);
+  }
+
+  inline static Expr expandDisjSubexpr (Expr exp)
+  {
+    RW<ExpandDisjExpr> rw(new ExpandDisjExpr());
     return dagVisit (rw, exp);
   }
 
@@ -873,11 +928,54 @@ namespace ufo
         ExprSet dsjs;
         ExprSet newDsjs;
         getDisj(exp, dsjs);
-        for (auto & d : dsjs)
+        for (auto d : dsjs)
         {
           if (isOpX<TRUE>(d)) return mk<TRUE>(efac);
           if (isOpX<EQ>(d) && d->left() == d->right()) return mk<TRUE>(efac);
-          if (!isOpX<FALSE>(d)) newDsjs.insert(d);
+          if (isOpX<NEG>(d)) d = mkNeg(d->left());
+          if (!isOpX<FALSE>(d))
+          {
+            Expr lhs, rhs;
+            if (isOp<ComparissonOp>(d))
+            {
+              lhs = d->left();
+              rhs = d->right();
+            }
+            for (auto & d1 : newDsjs)
+            {
+              if (mkNeg(d1) == d) return mk<TRUE>(efac);
+
+              Expr lhs1, rhs1;
+              if (isOp<ComparissonOp>(d1))
+              {
+                lhs1 = d1->left();
+                rhs1 = d1->right();
+              }
+
+              if (lhs == lhs1 && rhs == rhs1)
+              {
+                if ((isOpX<NEQ>(d) && isOpX<LEQ>(d1)) ||
+                    (isOpX<NEQ>(d) && isOpX<GEQ>(d1)) ||
+                    (isOpX<LEQ>(d) && isOpX<NEQ>(d1)) ||
+                    (isOpX<GEQ>(d) && isOpX<NEQ>(d1)) ||
+                    (isOpX<LEQ>(d) && isOpX<GEQ>(d1)) ||
+                    (isOpX<GEQ>(d) && isOpX<LEQ>(d1))) // GF: to extend
+                  return mk<TRUE>(efac);
+              }
+
+              if (lhs == lhs1 && rhs != NULL && rhs1 != NULL && isOpX<MPZ>(rhs) && isOpX<MPZ>(rhs1))
+              {
+                if ((isOpX<NEQ>(d) && isOpX<NEQ>(d1) && rhs != rhs1) ||
+                    (isOpX<GEQ>(d) && isOpX<LEQ>(d1) && lexical_cast<int>(rhs) <= lexical_cast<int>(rhs1)) ||
+                    (isOpX<LEQ>(d) && isOpX<GEQ>(d1) && lexical_cast<int>(rhs1) <= lexical_cast<int>(rhs)) ||
+                    (isOpX<GT>(d) && isOpX<LT>(d1) && lexical_cast<int>(rhs) < lexical_cast<int>(rhs1)) ||
+                    (isOpX<LT>(d) && isOpX<GT>(d1) && lexical_cast<int>(rhs1) < lexical_cast<int>(rhs))) // GF: to extend
+                  return mk<TRUE>(efac);
+              }
+            }
+
+            newDsjs.insert(d);
+          }
         }
         return disjoin(newDsjs, efac);
       }
@@ -905,79 +1003,6 @@ namespace ufo
       return exp;
     }
   };
-
-  static Expr resolve(Expr e);
-
-  struct ResolveExpr
-  {
-    ExprFactory &efac;
-    ResolveExpr (ExprFactory& _efac) : efac(_efac){};
-
-    Expr operator() (Expr exp)
-    {
-      if (isOpX<OR>(exp))
-      {
-        ExprSet dsjs;
-        ExprSet newDsjs;
-        getDisj(exp, dsjs);
-        map<Expr, ExprSet> resolvs;
-        for (auto & d : dsjs)
-        {
-          if (isOpX<TRUE>(d)) return mk<TRUE>(efac);
-          if (isOpX<EQ>(d) && d->left() == d->right()) return mk<TRUE>(efac);
-          if (!isOpX<FALSE>(d)) newDsjs.insert(d);
-          ExprSet tmp;
-          getConj(d, tmp);
-          for (auto & a : tmp) resolvs[a].insert(d);
-        }
-
-        dsjs.clear();
-        ExprSet doneLits;
-        ExprSet done;
-
-        // try resolution
-        for (auto & a1 : resolvs)
-        {
-          if (find(doneLits.begin(), doneLits.end(), a1.first) != doneLits.end()) continue;
-
-          for (auto & a2 : resolvs)
-          {
-            if (find(doneLits.begin(), doneLits.end(), a2.first) != doneLits.end()) continue;
-
-            if (mkNeg(a1.first) == a2.first)
-            {
-              ExprSet tmp;
-              Expr tmp1 = simplifyBool(replaceAll(disjoin(a1.second, efac), a1.first, mk<TRUE>(efac)));
-              if (!isOpX<TRUE>(tmp1)) tmp.insert(tmp1);
-              tmp1 = simplifyBool(replaceAll(disjoin(a2.second, efac), a2.first, mk<TRUE>(efac)));
-              if (!isOpX<TRUE>(tmp1)) tmp.insert(tmp1);
-
-              dsjs.insert(resolve(disjoin(tmp, efac)));
-              done.insert(a1.second.begin(), a1.second.end());
-              done.insert(a2.second.begin(), a2.second.end());
-              doneLits.insert(a1.first);
-              doneLits.insert(a2.first);
-            }
-          }
-        }
-
-        for (auto & a : newDsjs)
-        {
-          if (find(done.begin(), done.end(), a) != done.end()) continue;
-          dsjs.insert(a);
-        }
-
-        return disjoin(dsjs, efac);
-      }
-      return exp;
-    }
-  };
-
-  inline static Expr resolve (Expr exp)
-  {
-    RW<ResolveExpr> rw(new ResolveExpr(exp->getFactory()));
-    return dagVisit (rw, exp);
-  }
 
   static Expr simplifyExists (Expr exp);
 
