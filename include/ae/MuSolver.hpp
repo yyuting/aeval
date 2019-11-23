@@ -282,7 +282,6 @@ namespace ufo
           ExprVector av;
           filter (*it, bind::IsConst (), inserter(av, av.begin()));
           Expr a = normalizeArithm(replaceAll(*it, forallMatching));
-
           bool found = false;
           for (auto it2 = flaUpdDisj.begin(); it2 != flaUpdDisj.end();)
           {
@@ -295,9 +294,29 @@ namespace ufo
             ExprMap matching1;
             if (findMatchingSubexpr (a, d, av, matching1))
             {
+              int toCont = false;
               for (auto & m : matching1)
-                if (m.first!=NULL && m.second != NULL && forallMatching[m.first] == NULL)
-                  forallMatching[m.first] = m.second;
+              {
+                if (m.first != NULL && m.second != NULL)
+                {
+                  Expr tmp = replaceAll (m.second, forallMatching);
+                  if (forallMatching[m.first] != NULL &&
+                      forallMatching[m.first] != tmp)
+                  {
+                    toCont = true;
+                    break;
+                  }
+                  if (forallMatching[m.first] == NULL)
+                  {
+                    forallMatching[m.first] = m.second;
+                  }
+                }
+              }
+              if (toCont)
+              {
+                ++it2;
+                continue;
+              }
 
               used.insert(*it2);
               it2 = flaUpdDisj.erase(it2);
