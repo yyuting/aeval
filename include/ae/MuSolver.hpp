@@ -18,7 +18,6 @@ namespace ufo
       Expr fla;
       Expr flaForall;
       Expr flaOrig;
-      ExprSet flaOrigDisj;
       ExprMap recDefsMu;
       ExprMap recDefsNu;
       Expr muVar;
@@ -127,16 +126,17 @@ namespace ufo
       usedNu = false;
       flaOrig = fla;
       fla = fla->right();
-      getDisj(flaOrig->right(), flaOrigDisj);
     }
 
     bool iter()
     {
       SMTUtils u(efac);
-
+      ExprSet flaOrigDisj;
+      getDisj(flaOrig->right(), flaOrigDisj);
       fla = normalizeArithm(fla);
       ExprSet flaApps;
       filter (fla, bind::IsFApp (), inserter(flaApps, flaApps.begin()));
+      ExprMap allRepls;
       for (auto & app : flaApps)
       {
         Expr appRepled = app;
@@ -149,14 +149,13 @@ namespace ufo
           if (!repled) repled = rewrite(a.first, a.second, appRepled);
           usedNu |= repled;
         }
-
-        fla = replaceAll(fla, app, appRepled);
+        allRepls[app] = appRepled;
       }
 
+      fla = replaceAll(fla, allRepls);
       fla = expandExists(fla);
       fla = simplifyExists(fla);
       fla = expandConjSubexpr(fla);
-
       ExprSet flaUpdDisj;
       getDisj(fla, flaUpdDisj);
 
@@ -483,11 +482,11 @@ namespace ufo
     };
   };
 
-  inline static void mu (Expr s)
+  inline static void mu (Expr s, int iters = 2)
   {
     MuSolver m(s->getFactory());
     m.initialize(s);
-    for (int i = 0; i < 2; i++) if (m.iter()) break;
+    for (int i = 0; i < iters; i++) if (m.iter()) break;
   }
 }
 

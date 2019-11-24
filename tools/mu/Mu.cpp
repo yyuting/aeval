@@ -12,6 +12,18 @@ bool getBoolValue(const char * opt, bool defValue, int argc, char ** argv)
   return defValue;
 }
 
+char * getStrValue(const char * opt, const char * defValue, int argc, char ** argv)
+{
+  for (int i = 1; i < argc-1; i++)
+  {
+    if (strcmp(argv[i], opt) == 0)
+    {
+      return argv[i+1];
+    }
+  }
+  return (char *)defValue;
+}
+
 char * getSmtFileName(int num, int argc, char ** argv)
 {
   int num1 = 1;
@@ -34,8 +46,9 @@ int main (int argc, char ** argv)
   EZ3 z3(efac);
 
   Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
+  int iters = atoi(getStrValue("--iter", "2", argc, argv));
 
-  mu(s);
+  mu(s, iters);
 
   return 0;
 }
