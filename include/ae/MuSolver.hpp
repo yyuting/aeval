@@ -161,7 +161,8 @@ namespace ufo
 
       Expr ex1;
       Expr ex2;
-      ExprSet used;
+      ExprSet usedOrig;
+      ExprSet usedUpd;
       ExprMap forallMatching;
       bool hasFapps = false;
 
@@ -317,16 +318,25 @@ namespace ufo
                 continue;
               }
 
-              used.insert(*it2);
+              usedUpd.insert(*it2);
+
               it2 = flaUpdDisj.erase(it2);
               found = true;
               break;
             }
             ++it2;
           }
-          if (found) it = flaOrigDisj.erase(it);
+          if (found)
+          {
+            usedOrig.insert(*it);
+            it = flaOrigDisj.erase(it);
+          }
           else ++it;
         }
+
+      if(!u.isEquiv(disjoin(usedUpd, efac),
+                       replaceAll(disjoin(usedOrig, efac), forallMatching)))
+        return false;
 
       if (!forallMatching.empty() && ex1 == NULL && ex2 == NULL)
       {
