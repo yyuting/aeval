@@ -11,9 +11,24 @@
 (assert (forall ((x Elem)) (= (num x nil) 0)))
 (assert (forall ((x Elem) (y Elem) (xs Lst)) (= (num x (cons y xs)) (ite (= x y) (+ 1 (num x xs)) (num x xs)))))
 
-(declare-fun remove (Elem Lst) Lst)
-(assert (forall ((x Elem)) (= (remove x nil) nil)))
-(assert (forall ((x Elem) (y Elem) (xs Lst)) (= (remove x (cons y xs)) (ite (= x y) xs (cons y (remove x xs))))))
+(declare-fun removeall (Elem Lst) Lst)
+(assert (forall ((x Elem)) (= (removeall x nil) nil)))
+(assert (forall ((x Elem) (y Elem) (xs Lst))
+  (= (removeall x (cons y xs)) (ite (= x y) (removeall x xs) (cons y (removeall x xs))))))
+
+; extras
+
+(assert (forall ((xs Lst) (a (Elem)) (b (Elem)))
+  (=> (distinct a b) (= (num b (removeall a xs)) (num b xs)))))
+
+(assert (forall ((s (Array Elem Int)) (a (Elem)) (b (Elem)))
+  (=> (= (select s a) 0) (= (select (store s b 0) a) 0))))
+
+(assert (forall ((s (Array Elem Int)) (a (Elem)) (b (Elem)))
+  (=> (distinct a b) (= (select (store s a 0) b) (select s b)))))
+
+(assert (forall ((s (Array Elem Int)) (a (Elem)) (b (Elem)) (c Int) (d Int))
+  (=> (distinct a b) (= (store (store s a c) b d)  (store (store s b d) a c)))))
 
 ; init
 
@@ -33,5 +48,4 @@
 ; remove
 
 (assert
-  (= xs1 (remove in xs)))
-
+  (= xs1 (removeall in xs)))

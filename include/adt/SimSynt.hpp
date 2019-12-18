@@ -52,8 +52,10 @@ namespace ufo
     int indexVarInd = -1;
     int adtVarInd = -1;
     ExprVector nonstateVars;
+
     ExprSet extras; // aux
     Expr nestedRel;
+
     ExprVector extraLemmas;
     Expr baseRule;
     Expr indRule;
@@ -212,6 +214,7 @@ namespace ufo
       return mknary<FORALL>(args);
     }
 
+    // relations based on linear scan (e.g., stack, queue)
     void guessScanBasedRelations(Expr accessTerm)
     {
       assert(accessTerm != NULL);
@@ -286,7 +289,7 @@ namespace ufo
       // create a quantified formula representing the inductive rule
       indRule = createQuantifiedFormula(generalizeInductiveDef(rel, argsInd, argsIndNested, cnjs));
 
-      // generate extra lemmas
+      // generate and prove extra lemmas
       extraLemmas.push_back(createQuantifiedFormula(mk<IMPL>(bind::fapp (rel, vars), invariant)));
       Expr newInd = bind::intConst(mkTerm<string> (lexical_cast<string>(indexVar) + "1", efac));
       ExprVector newVars = vars;
@@ -296,6 +299,7 @@ namespace ufo
                    bind::fapp (rel, vars)), bind::fapp (rel, newVars))));
     }
 
+    // relations based on nonlinear scan and noops (e.g., sets, multisets)
     void guessRelations(bool alt = true)
     {
       // prepare for the nested call of R in the inductive rule of R
@@ -310,107 +314,110 @@ namespace ufo
         {
           // TODO: make sure variables are unified
           if (alt)
-            // currently, hardcode:
-            argsIndNested[j] = opsArr[stateConsumingOp]->right();
+          {
+            argsIndNested[j] = opsArr[indConIndex]->right();
+            if (indConIndex == stateProducingOp)
+            {
+              argsIndNested[j] = swapPlusMinusConst(argsIndNested[j]);
+              // GF: hack, need a proper replacer
+              argsIndNested[j] = replaceAll(argsIndNested[j], mk<TRUE>(efac), mk<FALSE>(efac));
+            }
+          }
         }
       }
 
       // prepare the inductive definition of R (i.e., the RHS of the inductive rule)
       ExprSet cnjs;
-      ExprSet transitions1;
-      ExprSet transitions2;
-      getConj(opsArr[stateNoOp], transitions1);
-      getConj(opsAdt[stateNoOp], transitions2);
-      for (auto tr1 : transitions1)
-      {
-        for (auto tr2 : transitions2)
-        {
-          if (isOpX<EQ>(tr1) && isOpX<EQ>(tr2))
-          {
-            Expr eq;
-            if (tr1->left() == tr2->left())
-            {
-              eq = (mk<EQ>(tr1->right(), tr2->right()));
-            }
-            else if (tr1->right() == tr2->right())
-            {
-              eq = (mk<EQ>(tr1->left(), tr2->left()));
-            }
-            else if (tr1->left() == tr2->right())
-            {
-              eq = (mk<EQ>(tr1->right(), tr2->left()));
-            }
-            else if (tr1->right() == tr2->left())
-            {
-              eq = (mk<EQ>(tr1->left(), tr2->right()));
-            }
-            if (eq != NULL)
-              cnjs.insert(
-                simplifyFormulaWithLemmas(replaceAll(eq, vars[adtVarInd], argsInd[adtVarInd]),
-                  assumptions, constructors));
-          }
-        }
-      }
-
-      nestedRel = bind::fapp (rel, argsIndNested);
-      cnjs.insert(nestedRel);
-      Expr inductiveDef = mk<EQ>(bind::fapp (rel, argsInd), conjoin(cnjs, efac));
-      indRule = createQuantifiedFormula(inductiveDef);
-
+      ExprSet transitionsArr;
+      ExprSet transitionsAdt;
       if (stateNoOp >= 0 && stateNoOp < opsAdt.size())
       {
         Expr adtPred;
         Expr arrPred;
-        if (opsAdt[stateNoOp]->left() == opsArr[stateNoOp]->left())
+
+        getConj(opsArr[stateNoOp], transitionsArr);
+        getConj(opsAdt[stateNoOp], transitionsAdt);
+
+        for (auto trArr : transitionsArr)
         {
-          adtPred = opsAdt[stateNoOp]->right();
-          arrPred = opsArr[stateNoOp]->right();
-        }
-        else if (opsAdt[stateNoOp]->right() == opsArr[stateNoOp]->right())
-        {
-          adtPred = opsAdt[stateNoOp]->left();
-          arrPred = opsArr[stateNoOp]->left();
-        }
-        else if (opsAdt[stateNoOp]->left() == opsArr[stateNoOp]->right())
-        {
-          adtPred = opsAdt[stateNoOp]->right();
-          arrPred = opsArr[stateNoOp]->left();
-        }
-        else if (opsAdt[stateNoOp]->right() == opsArr[stateNoOp]->left())
-        {
-          adtPred = opsAdt[stateNoOp]->left();
-          arrPred = opsArr[stateNoOp]->right();
-        }
-        if (adtPred != NULL && arrPred != NULL &&
-            bind::typeOf(adtPred) == mk<BOOL_TY>(efac))
-        {
-          // currently, hardcode:
-          if (alt)
+          for (auto trAdt : transitionsAdt)
           {
-            extras.insert(mkNeg(adtPred));
-            extras.insert(mkNeg(arrPred));
+            if (isOpX<EQ>(trArr) && isOpX<EQ>(trAdt))
+            {
+              if (trArr->left() == trAdt->left())
+              {
+                adtPred = trAdt->right();
+                arrPred = trArr->right();
+              }
+              else if (trArr->right() == trAdt->right())
+              {
+                adtPred = trAdt->left();
+                arrPred = trArr->left();
+              }
+              else if (trArr->left() == trAdt->right())
+              {
+                adtPred = trAdt->left();
+                arrPred = trArr->right();
+              }
+              else if (trArr->right() == trAdt->left())
+              {
+                adtPred = trAdt->right();
+                arrPred = trArr->left();
+              }
+            }
+          }
+        }
+
+        if (adtPred != NULL && arrPred != NULL)
+        {
+          cnjs.insert(
+            simplifyFormulaWithLemmas(
+              replaceAll(mk<EQ>(arrPred, adtPred),
+                vars[adtVarInd], argsInd[adtVarInd]),
+                  assumptions, constructors));
+          nestedRel = bind::fapp (rel, argsIndNested);
+          cnjs.insert(nestedRel);
+          Expr inductiveDef = mk<EQ>(bind::fapp (rel, argsInd), conjoin(cnjs, efac));
+          indRule = createQuantifiedFormula(inductiveDef);
+
+          if (bind::typeOf(adtPred) == mk<BOOL_TY>(efac) &&
+              bind::typeOf(arrPred) == mk<BOOL_TY>(efac))
+          {
+            // currently, hardcode:
+            if (alt)
+            {
+              extras.insert(mkNeg(adtPred));
+              extras.insert(mkNeg(arrPred));
+            }
+            else
+            {
+              extras.insert(adtPred);
+              extras.insert(arrPred);
+            }
+
+            // TODO: make sure variables are unified
+            extraLemmas.push_back(createQuantifiedFormula(
+                  mk<IMPL>(mk<AND>(bind::fapp (rel, vars), adtPred), arrPred)));
+            extraLemmas.push_back(createQuantifiedFormula(
+                  mk<IMPL>(mk<AND>(bind::fapp (rel, vars), mkNeg(adtPred)), mkNeg(arrPred))));
           }
           else
           {
-            extras.insert(adtPred);
-            extras.insert(arrPred);
+            extraLemmas.push_back(createQuantifiedFormula(
+                 mk<IMPL>(bind::fapp (rel, vars), mk<EQ>(arrPred, adtPred))));
           }
-          extraLemmas.push_back(createQuantifiedFormula(
-                mk<IMPL>(mk<AND>(bind::fapp (rel, vars), adtPred), arrPred)));
-          extraLemmas.push_back(createQuantifiedFormula(
-                mk<IMPL>(mk<AND>(bind::fapp (rel, vars), mkNeg(adtPred)), mkNeg(arrPred))));
         }
       }
     }
 
     Expr simplifyFormulaWithLemmas(Expr fla, ExprVector lemmas, ExprVector& constructors)
     {
-      ADTSolver sol (fla, lemmas, constructors, 7, 3, 3, 0, false);
+      ADTSolver sol (fla, lemmas, constructors, 0, 0, 3, 0, false);
       ExprSet newAssms;
       sol.simplifyAssm(fla, newAssms);
       if (newAssms.empty()) return fla;
       ExprSet newAssmsSimpl;
-      for (auto & a : newAssms) newAssmsSimpl.insert(simplifyBool(a));
+      for (auto & a : newAssms) newAssmsSimpl.insert(/*simplifyArithm*/(simplifyBool(a)));
       return *newAssmsSimpl.begin(); // TODO: check if it is meaningful somehow
     }
 
@@ -552,6 +559,7 @@ namespace ufo
           indRule = replaceAll(indRule, nestedRel, mk<ITE>(mkNeg(pre1), nestedRel, rel1));
           if (checkAll(assumptions, ExprSet()))
           {
+            outs () << "simulation proved\n";
             u.serialize_formula(baseRule);
             u.serialize_formula(indRule);
           }
@@ -632,7 +640,7 @@ namespace ufo
 
     bool prove (ExprVector lemmas, Expr fla, int rounds = 2)
     {
-      ADTSolver sol (fla, lemmas, constructors, 7, 3, 3, 0, false); // last false is for verbosity
+      ADTSolver sol (fla, lemmas, constructors, 7, 2, 3, 1, false); // last false is for verbosity
       vector<int> basenums, indnums; // dummies
       bool res;
       if (isOpX<FORALL>(fla)) res = sol.solve(basenums, indnums);

@@ -65,6 +65,36 @@ namespace ufo
       return false;
     }
 
+    Expr eliminateEqualities(Expr goal)
+    {
+      ExprMap allrepls;
+      for (auto it = assumptions.begin(); it != assumptions.end();)
+      {
+        Expr &a = *it;
+        if (isOpX<EQ>(a) && allrepls[a->left()] == NULL &&
+            isOpX<FAPP> (a->left()) && a->left()->arity () == 1 &&
+            isOpX<FAPP> (a->right()) && a->right()->arity () == 1)
+        {
+          if (verbose) outs () << string(sp, ' ') << "replacing   " << *a->left()
+                               << "   by   " << * a->right() << "   everywhere\n";
+          allrepls[a->left()] = a->right();
+          it = assumptions.erase(it);
+        }
+        else ++it;
+      }
+      if (allrepls.size() == 0) return goal;
+
+      for (auto & a : assumptions)
+      {
+        if (!isOpX<FORALL>(a)) // TODO: support FORALLs properly
+        {
+          a = replaceAll(a, allrepls);
+        }
+      }
+
+      return replaceAll(goal, allrepls);
+    }
+
     bool mergeAssumptions(int bnd = -1)
     {
       // simplify them first
@@ -113,8 +143,13 @@ namespace ufo
         }
         assumptions.clear();
         for (auto & a : newAssms)
+        {
+          // some blocking heurisitcs here (TODO: try to block them in early stages, i.e., don't even compute)
+          if (isOpX<EQ>(a) && isOpX<AND>(a->left()) /*&& isOpX<AND>(a->right())*/) continue;
+
           if (find (blockedAssms.begin(), blockedAssms.end(), a) == blockedAssms.end())
             unique_push_back(a, assumptions);
+        }
       }
       return false;
     }
@@ -147,6 +182,7 @@ namespace ufo
             return true;
           }
 
+          tmp = simplifyArithm(tmp);
           ExprSet tmps;
           getConj(simplifyBool(tmp), tmps);
           getConj(simplifyBool(simplifyArr(tmp)), tmps); // duplicate for the case of arrays
@@ -340,7 +376,6 @@ namespace ufo
         if (isOpX<EQ>(assmQF))
         {
           matching.clear();
-
           // if the assumption is equality, the we search for a matching of its LHS
           // (we can try matching the RHS as well, but it will likely give us infinite loops)
           if (findMatchingSubexpr (assmQF->left(), subgoal, args, matching))
@@ -348,7 +383,6 @@ namespace ufo
             repl = replaceAll(repl, matching);
             return replaceAll(subgoal, repl->left(), repl->right());
           }
-
           // try vice versa (dangerous since it will introduce repeated rewriting)
           matching.clear();
           if (!fwd && findMatchingSubexpr (assmQF->right(), subgoal, args, matching))
@@ -358,16 +392,28 @@ namespace ufo
           }
         }
 
-        if ((isOpX<LEQ>(assmQF) && isOpX<LEQ>(subgoal)) ||
-            (isOpX<GEQ>(assmQF) && isOpX<GEQ>(subgoal)) ||
-            (isOpX<LT>(assmQF) && isOpX<LT>(subgoal)) ||
-            (isOpX<GT>(assmQF) && isOpX<GT>(subgoal)))
+        if (isOp<ComparissonOp>(assmQF) && isOp<ComparissonOp>(subgoal))
         {
-          if (findMatchingSubexpr (assmQF->left(), subgoal->left(), args, matching))
+          Expr assmQFtmp = assmQF;
+          Expr subgoalTmp = subgoal;
+          assmQF = normalizeArithm(assmQF);
+          subgoal = normalizeArithm(subgoal);
+
+          if (findMatching (assmQF->left(), subgoal->left(), args, matching))
           {
-            for (auto & a : matching) repl = replaceAll(repl, a.first, a.second);
-            if (u.implies(repl, subgoal)) return mk<TRUE>(efac);
+            repl = replaceAll(assmQF, matching);
+            if (fwd && !u.isSat(repl, subgoal)) return mk<FALSE>(efac);
+            if (fwd)
+            {
+              if (((isOpX<LEQ>(repl) && isOpX<GEQ>(subgoal)) || (isOpX<GEQ>(repl) && isOpX<LEQ>(subgoal))) &&
+                  (repl->left() == subgoal->left()) && (repl->right() == subgoal->right()))
+                return mk<EQ>(repl->left(), subgoal->right());
+            }
+            if (!fwd && u.implies(repl, subgoal)) return mk<TRUE>(efac);
           }
+          matching.clear();
+          assmQF = assmQFtmp;
+          subgoal = subgoalTmp;
         }
 
         if (isOpX<ITE>(subgoal))
@@ -381,7 +427,7 @@ namespace ufo
         }
 
         // try finding inconsistencies
-        if (fwd)
+        if (fwd && !containsOp<FORALL>(assmQF))
         {
           ExprMap matching1;
           ExprVector args1;
@@ -460,6 +506,20 @@ namespace ufo
           {
             Expr res = disjoin(dsjs, efac);
             return res;
+          }
+        }
+
+        if (isOp<ComparissonOp>(assm))
+        {
+          Expr res = replaceAll(subgoal, assm, mk<TRUE>(efac));
+          res = replaceAll(res, mkNeg(assm), mk<FALSE>(efac));
+          Expr tmp = reBuildCmpSym(assm, assm->left(), assm->right());
+          assert(u.isEquiv(assm, tmp));
+          res = replaceAll(res, tmp, mk<TRUE>(efac));
+          res = replaceAll(res, mkNeg(tmp), mk<FALSE>(efac));
+          if (res != subgoal)
+          {
+            return simplifyBool(res);
           }
         }
 
@@ -581,6 +641,7 @@ namespace ufo
         uniquePushConj(subgoal->left(), assumptions);
         if (assumptions.size() != assumptionsTmp.size())
         {
+          subgoal = eliminateEqualities(subgoal);
           toRem = true;
           if (mergeAssumptions())
           {
@@ -778,6 +839,7 @@ namespace ufo
       auto assumptionsTmp = assumptions;
       uniquePushConj(mkNeg(subgoal), assumptions);
       bool res = false;
+      subgoal = eliminateEqualities(subgoal);
       if (mergeAssumptions(1))
       {
         res = true;
@@ -814,6 +876,7 @@ namespace ufo
       auto assumptionsTmp = assumptions;
 
       uniquePushConj(mkNeg(*spl), assumptions);
+      subgoal = eliminateEqualities(subgoal);
       if (mergeAssumptions())
       {
         assumptions = assumptionsTmp;
@@ -972,8 +1035,10 @@ namespace ufo
         if (verbose) outs () << string(sp, ' ') << "split for (part " << part << "/"
             << spl.size()<< "): " << *s << "\n" << string(sp, ' ') << "{\n";
         sp += 2;
+        part++;
 
         uniquePushConj(s, assumptions);
+        subgoal = eliminateEqualities(subgoal);
         if (mergeAssumptions())
         {
           assumptions = assumptionsTmp;
@@ -990,8 +1055,6 @@ namespace ufo
           }
         }
         printAssumptions();
-
-        part++;
 
         res = rewriteAssumptions(subgoal);
         sp -= 2;
@@ -1151,6 +1214,7 @@ namespace ufo
 
       if (verbose) outs() << "\nBase case:       " << *baseSubgoal << "\n{\n";
       bool baseres = false;
+      baseSubgoal = eliminateEqualities(baseSubgoal);
       if (mergeAssumptions())
       {
         if (verbose) outs() << "  proven trivially\n";
@@ -1246,6 +1310,7 @@ namespace ufo
         indSubgoal = indSubgoal->right();
       }
 
+      indSubgoal = eliminateEqualities(indSubgoal);
       if (mergeAssumptions()) return true;
 
       splitAssumptions();
@@ -1329,6 +1394,7 @@ namespace ufo
               assumptions[j] = replaceAll(assumptions[j], d->left(), d->right());
             }
 
+            goal = eliminateEqualities(goal);
             mergeAssumptions(1);
             printAssumptions();
             bool partiallyDone = rewriteAssumptions(replaceAll(goal, d->left(), d->right()));
@@ -1349,6 +1415,7 @@ namespace ufo
               assumptions[j] = simplifyBool(replaceAll(assumptions[j], pre, mk<TRUE>(efac)));
               assumptions[j] = replaceAll(assumptions[j], pre->left(), pre->right());
             }
+            goal = eliminateEqualities(goal);
             mergeAssumptions(1);
             printAssumptions();
             bool done = rewriteAssumptions(replaceAll(goal, pre->left(), pre->right()));
@@ -1417,6 +1484,7 @@ namespace ufo
     bool solveNoind(int rounds = 2)
     {
       auto assumptionsTmp = assumptions;
+      goal = eliminateEqualities(goal);
       mergeAssumptions(rounds);
       printAssumptions();
       if (verbose) outs () << "=====\n" << *goal << "\n\n\n";
