@@ -26,7 +26,7 @@ namespace ufo
     ExprSet learnedExprs;
 
     public:
-    
+
     CandChecker (ExprFactory &_efac, HornRuleExt* _fc, HornRuleExt* _tr, HornRuleExt* _qr) :
       efac(_efac), z3(efac), smt_solver (z3), fc(_fc), tr(_tr), qr(_qr), vars(qr->srcVars)
     {
@@ -69,7 +69,7 @@ namespace ufo
       smt_solver.assertExpr (fc->body);
       smt_solver.assertExpr (mk<NEG>(cand));
 
-      return (!smt_solver.solve ());
+      return bool{(!smt_solver.solve ())};
     }
 
     bool checkInductiveness(Expr cand)
@@ -89,7 +89,7 @@ namespace ufo
       smt_solver.assertExpr (getlearnedLemmas()); // IMPORTANT: use all lemmas learned so far
       smt_solver.assertExpr (mk<NEG>(candPrime));
 
-      bool res = !smt_solver.solve ();
+      bool res = bool{!smt_solver.solve ()};
       if (res) learnedExprs.insert (cand);  // inductiveness check passed; so add a new lemma
 
       return res;
@@ -104,7 +104,7 @@ namespace ufo
       smt_solver.assertExpr (qr->body);
       smt_solver.assertExpr (getlearnedLemmas());
 
-      return !smt_solver.solve ();
+      return bool{!smt_solver.solve ()};
     }
   };
 }
