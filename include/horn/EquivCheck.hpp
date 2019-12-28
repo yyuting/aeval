@@ -43,6 +43,119 @@ namespace ufo
     }
   }
 
+  inline Expr extractCond(Expr body, bool &found, bool &valid) {
+    // Assumption 1: only 1 cond (comparison clause) in body
+    // Assumption 2: All clause are connected by <AND>
+    // Assumption 3: All clause are either comparisons or assignments
+    Expr cond;
+    found = false;
+    valid = true;
+
+    ExprVector nodes_to_traverse;
+    nodes_to_traverse.push_back(body);
+    Expr current;
+
+    while (nodes_to_traverse.size() > 0) {
+      current = nodes_to_traverse.back();
+      nodes_to_traverse.pop_back();
+
+      if (isOpX<AND>(current)) {
+        for (int i = 0; i < current->arity(); i++) {
+          nodes_to_traverse.push_back(current->arg(i));
+        }
+      } else if (isOpX<EQ>(current)) {
+        // do nothing
+      } else {
+        // op has to be one of the non-assignment comparison ops
+        // otherwise the body is invalid to analyze, violates assumption 3
+        if (isOpX<NEQ>(current) || isOpX<LEQ>(current) || isOpX<GEQ>(current) || isOpX<LT>(current) || isOpX<GT>(current)) {
+          if (found) {
+            // this would violate assumption 1
+            valid = false;
+            nodes_to_traverse.resize(0);
+          } else {
+            found = true;
+            cond = current;
+          }
+        } else {
+          // this would violate assumption 2 or 3
+          // TODO: this can be allowed if we consider more ops e.g. itp
+          // but for simplificy don't consider it for now
+          valid = false;
+          nodes_to_traverse.resize(0);
+        }
+      }
+    }
+
+    outs() << "success? " << valid << "\n";
+    outs() << "found? " << found << "\n";
+    return cond;
+  }
+
+  inline Expr robustBody(Expr body, Expr cond, bool found, ExprVector src, ExprVector dst) {
+    if (!found) return body;
+
+    Expr null_node = mk<TRUE>(body->efac());
+
+    for (int i = 0; i < src.size(); i++) {
+      null_node = mk<AND>(null_node, mk<EQ>(dst[i], src[i]));
+    }
+
+    Expr robust_body = mk<OR>(body, mk<AND>(mk<NEG>(cond), null_node));
+    return robust_body;
+  }
+
+  vector<int> find_free_var(Expr body, ExprVector vars, bool &valid) {
+    // Assumption 1: All clause are connected by <AND>
+    // Assumption 2: All clause are either comparisons or assignments
+    valid = true;
+
+    ExprVector nodes_to_traverse;
+    nodes_to_traverse.push_back(body);
+    Expr current;
+
+    vector<int> free_inds;
+    for (int i = 0; i < vars.size(); i++) {
+      free_inds.push_back(i);
+    }
+
+    while (nodes_to_traverse.size() > 0) {
+      current = nodes_to_traverse.back();
+      nodes_to_traverse.pop_back();
+
+      if (isOpX<AND>(current)) {
+        for (int i = 0; i < current->arity(); i++) {
+          nodes_to_traverse.push_back(current->arg(i));
+        }
+      } else if (isOpX<EQ>(current)) {
+        bool is_eq = false;
+        for (int k = 0; k < free_inds.size(); k++) {
+          is_eq = (current->left() == vars[free_inds[k]]);
+          if (is_eq) {
+            free_inds.erase(free_inds.begin() + k);
+            break;
+          }
+        }
+      } else {
+        if (!(isOpX<NEQ>(current) || isOpX<LEQ>(current) || isOpX<GEQ>(current) || isOpX<LT>(current) || isOpX<GT>(current))) {
+          valid = false;
+          break;
+        }
+      }
+    }
+
+    outs() << "success? " << valid << "\n";
+
+    return free_inds;
+  }
+
+void print(vector<int> const &input) {
+	for (int i = 0; i < input.size(); i++) {
+		outs() << input.at(i) << ' ';
+	}
+  outs() << "\n";
+}
+
   inline void equivCheck(string chcfile1, string chcfile2, int mode)
   {
     ExprFactory efac;
@@ -139,22 +252,6 @@ namespace ufo
         }
       }
 
-      if (isOpX<AND>(transit_body1)) {
-        outs() << "transition is AND\n" << transit_body1->arity() << "\n" << *transit_body1 << "\n";
-        outs() << * transit_body1->arg(0) << "\n";
-        if (isOpX<AND>(transit_body1->arg(0))) {
-          outs() << "inside also AND\n" << transit_body1->arg(0)->arity() << "\n";
-        }
-
-        if (isOpX<EQ>(transit_body1->arg(1))) {
-          outs() << "second inside is EQ\n";
-        }
-        //for (auto it = transit_body1->args_begin(), end = transit_body1->args_end(); it != end; ++it){
-        //  outs() << *it << "\n";
-        //}
-        exit(0);
-      }
-
       for (auto &hr: ruleManager2.chcs){
         if (hr.isInductive) {
           transit_body2 = hr.body;
@@ -168,6 +265,47 @@ namespace ufo
           init_dstVars2 = hr.dstVars;
           outs() << "init 2 var size\n" << init_dstVars2.size() << ", " << hr.locVars.size() << "\n";
         }
+      }
+
+
+      // analyze bodys, extract cond (if ANY)
+      bool found1, valid1, found2, valid2;
+      Expr cond1 = extractCond(transit_body1, found1, valid1);
+      Expr cond2 = extractCond(transit_body2, found2, valid2);
+
+      // assumption: var initialization only happens in init
+      bool init_valid1, init_valid2;
+      vector<int> free_var_ind1 = find_free_var(init_body1, init_dstVars1, init_valid1);
+      vector<int> free_var_ind2 = find_free_var(init_body2, init_dstVars2, init_valid2);
+
+      outs() << "free inds prog1: ";
+      print(free_var_ind1);
+      outs() << "free inds prog2: ";
+      print(free_var_ind2);
+
+      if (free_var_ind1 != free_var_ind2) {
+        outs() << "free variables not equal\n NOT equiv!\n";
+        exit(0);
+      }
+
+      if (!init_valid1) {
+        outs() << "program 1 init not valid\n NOT equiv\n;";
+        exit(0);
+      }
+
+      if (!init_valid2) {
+        outs() << "program 2 init not valid\n NOT equiv\n;";
+        exit(0);
+      }
+
+      if (!valid1) {
+        outs() << "program 1 body not valid\n NOT equiv\n";
+        exit(0);
+      }
+
+      if (!valid2) {
+        outs() << "program 2 body not valid\n NOT equiv\n";
+        exit(0);
       }
 
       if (transit_srcVars1.size() != transit_srcVars2.size() || transit_dstVars1.size() != transit_dstVars2.size() || transit_srcVars1.size() != transit_dstVars1.size()) {
@@ -204,6 +342,9 @@ namespace ufo
         //outs() << "init 1\n" << * new_init1 << "\n";
         //outs() << "init 2\n" << * new_init2 << "\n";
 
+        transit_body1 = robustBody(transit_body1, cond1, found1, transit_srcVars1, transit_dstVars1);
+        transit_body2 = robustBody(transit_body2, cond2, found2, transit_srcVars2, transit_dstVars2);
+
         Expr prog1 = mk<AND>(new_init1, transit_body1);
         Expr prog2 = mk<AND>(new_init2, transit_body2);
 
@@ -236,6 +377,8 @@ namespace ufo
 
             transit_body1 = replaceAll(transit_body1, transit_dstVars1[k], var1);
             transit_body2 = replaceAll(transit_body2, transit_dstVars2[k], var2);
+            //if (found1) cond1 = replaceAll(cond1, transit_dstVars1[k], var1);
+            //if (found2) cond2 = replaceAll(cond2, transit_dstVars2[k], var2);
           }
 
           for (int k = 0; k < locVars1.size(); k++) {
@@ -255,13 +398,12 @@ namespace ufo
           for (int k = 0; k < transit_srcVars1.size(); k++) {
             transit_body1 = replaceAll(transit_body1, transit_srcVars1[k], transit_dstVars1[k]);
             transit_body2 = replaceAll(transit_body2, transit_srcVars2[k], transit_dstVars2[k]);
+            //if (found1) cond1 = replaceAll(cond1, transit_srcVars1[k], transit_dstVars1[k]);
+            //if (found2) cond2 = replaceAll(cond2, transit_srcVars2[k], transit_dstVars2[k]);
           }
 
           //outs () << "new body1\n" << * transit_body1 << "\n";
           //outs () << "new body2\n" << * transit_body2 << "\n";
-
-          prog1 = mk<AND>(prog1, transit_body1);
-          prog2 = mk<AND>(prog2, transit_body2);
 
           transit_srcVars1 = transit_dstVars1;
           transit_srcVars2 = transit_dstVars2;
@@ -269,6 +411,23 @@ namespace ufo
           transit_dstVars2 = new_iter_dstVars2;
           locVars1 = new_locVars1;
           locVars2 = new_locVars2;
+
+          //transit_body1 = robustBody(transit_body1, cond1, found1, transit_srcVars1, transit_dstVars1);
+          //transit_body2 = robustBody(transit_body2, cond2, found2, transit_srcVars2, transit_dstVars2);
+
+          //outs() << "body1 unwind 1\n" << * transit_body1 << "\n";
+          //outs() << "body2 unwind 2\n" << * transit_body2 << "\n";
+
+          prog1 = mk<AND>(prog1, transit_body1);
+          prog2 = mk<AND>(prog2, transit_body2);
+
+
+
+          //outs() << "product 1 unwind 1\n" << * prog1 << "\n";
+          //outs() << "product 2 unwind 2\n" << * prog2 << "\n";
+          //exit(0);
+
+
 
           if (!utils.isSat(prog1)) {
             outs() << "prog1 invalid after unwinding " << i + 1 << " times, invalid program!\nNOT equiv!\n";
@@ -291,9 +450,16 @@ namespace ufo
         Expr product = mk<AND>(prog1, prog2);
         Expr out_eq = mk<TRUE>(efac);
 
-        for (int i = 0; i < transit_srcVars1.size(); i++) {
-          product = mk<AND>(product, mk<EQ>(init_srcVars1[i], init_srcVars2[i]));
+        for (int k = 0; k < free_var_ind1.size(); k++) {
+          product = mk<AND>(product, mk<EQ>(init_srcVars1[free_var_ind1[k]], init_srcVars2[free_var_ind2[k]]));
         }
+
+        //for (int i = 0; i < transit_srcVars1.size(); i++) {
+        //  product = mk<AND>(product, mk<EQ>(init_srcVars1[i], init_srcVars2[i]));
+        //}
+
+        if (!utils.isSat(prog1)) outs() << "prog1 invalid\n";
+        if (!utils.isSat(prog2)) outs() << "prog2 invalid\n";
 
         if (!utils.isSat(product)) {
           outs() << "product program invalid!\nNOT equiv!\n";
