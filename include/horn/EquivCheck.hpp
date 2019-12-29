@@ -149,14 +149,36 @@ namespace ufo
     return free_inds;
   }
 
-void print(vector<int> const &input) {
+vector<string> split(const string &s, char delim) {
+    vector<string> L;
+    stringstream ss;
+    ss.str(s);
+    string item;
+    while (getline(ss, item, delim)) {
+        L.push_back(item);
+    }
+    return L;
+}
+
+template<class scalar>
+void print(vector<scalar> const &input) {
 	for (int i = 0; i < input.size(); i++) {
 		outs() << input.at(i) << ' ';
 	}
   outs() << "\n";
 }
 
-  inline void equivCheck(string chcfile1, string chcfile2, int mode)
+template<class scalar>
+vector<scalar> string_to_scalar_vector(const string &arg_value) {
+    vector<scalar> ans;
+    vector<string> ansL_str = split(arg_value, ',');
+    for (int i = 0; i < (int) ansL_str.size(); i++) {
+        ans.push_back(scalar(stof(ansL_str[i])));
+    }
+    return ans;
+}
+
+inline void equivCheck(string chcfile1, string chcfile2, int mode, string out_vars)
   {
     ExprFactory efac;
     EZ3 z3(efac);
@@ -267,6 +289,19 @@ void print(vector<int> const &input) {
         }
       }
 
+      outs() << "out_vars: " << out_vars << "\n";
+      vector<int> out_vars_ind = string_to_scalar_vector<int>(out_vars);
+      //print<int>(out_vars_ind);
+
+      // check if out_vars_ind are valid
+      for (int k = 0; k < out_vars_ind.size(); k++) {
+        if (out_vars_ind[k] >= transit_dstVars1.size()) {
+          outs() << "out vars ind invalid, using all vars as output\n";
+          out_vars_ind.resize(0);
+          break;
+        }
+      }
+
 
       // analyze bodys, extract cond (if ANY)
       bool found1, valid1, found2, valid2;
@@ -279,9 +314,9 @@ void print(vector<int> const &input) {
       vector<int> free_var_ind2 = find_free_var(init_body2, init_dstVars2, init_valid2);
 
       outs() << "free inds prog1: ";
-      print(free_var_ind1);
+      print<int>(free_var_ind1);
       outs() << "free inds prog2: ";
-      print(free_var_ind2);
+      print<int>(free_var_ind2);
 
       if (free_var_ind1 != free_var_ind2) {
         outs() << "free variables not equal\n NOT equiv!\n";
@@ -466,9 +501,15 @@ void print(vector<int> const &input) {
           exit(0);
         }
 
-        for (int i = 0; i < transit_dstVars1.size(); i++) {
-          //product = mk<AND>(product, mk<NEG>(mk<EQ>(dstVars1[i], dstVars2[i])));
-          out_eq = mk<AND>(out_eq, mk<EQ>(transit_dstVars1[i], transit_dstVars2[i]));
+        if (out_vars_ind.size() == 0) {
+          for (int i = 0; i < transit_dstVars1.size(); i++) {
+            //product = mk<AND>(product, mk<NEG>(mk<EQ>(dstVars1[i], dstVars2[i])));
+            out_eq = mk<AND>(out_eq, mk<EQ>(transit_dstVars1[i], transit_dstVars2[i]));
+          }
+        } else {
+          for (int k = 0; k < out_vars_ind.size(); k++) {
+            out_eq = mk<AND>(out_eq, mk<EQ>(transit_dstVars1[out_vars_ind[k]], transit_dstVars2[out_vars_ind[k]]));
+          }
         }
         //product = mk<AND>(product, mk<NEG>(out_eq));
 
