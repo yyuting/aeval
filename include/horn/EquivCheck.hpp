@@ -43,10 +43,33 @@ namespace ufo
     }
   }
 
+  inline bool hasAssign(Expr body) {
+    // Assumption: end nodes are always assignment or comparisons
+    Expr current;
+    ExprVector nodes_to_traverse;
+    nodes_to_traverse.push_back(body);
+    bool has_assign = false;
+    while (nodes_to_traverse.size() > 0) {
+      current = nodes_to_traverse.back();
+      nodes_to_traverse.pop_back();
+      if (isOpX<EQ>(current)) {
+        has_assign = true;
+        break;
+      } else if (isOpX<NEQ>(current) || isOpX<LEQ>(current) || isOpX<GEQ>(current) || isOpX<LT>(current) || isOpX<GT>(current)){
+        // do nothing when it's comparison node
+      } else {
+        for (int i = 0; i < current->arity(); i++) {
+          nodes_to_traverse.push_back(current->arg(i));
+        }
+      }
+    }
+    return has_assign;
+  }
+
   inline Expr extractCond(Expr body, bool &found, bool &valid) {
-    // Assumption 1: only 1 cond (comparison clause) in body
-    // Assumption 2: All clause are connected by <AND>
-    // Assumption 3: All clause are either comparisons or assignments
+    // Assumption 1: cond must be extracted from one of the non-assignemtn comparison ops
+    // Assumption 2: cond clauses must be connected with <AND>
+    // Assumption 2: We will warn user when cluases are not comparisons, assignments or <AND>
     Expr cond;
     found = false;
     valid = true;
@@ -66,23 +89,30 @@ namespace ufo
       } else if (isOpX<EQ>(current)) {
         // do nothing
       } else {
-        // op has to be one of the non-assignment comparison ops
-        // otherwise the body is invalid to analyze, violates assumption 3
+        // cond has to be extracted from one of the non-assignment comparison ops
+        // otherwise the body is invalid to analyze, will warn user
         if (isOpX<NEQ>(current) || isOpX<LEQ>(current) || isOpX<GEQ>(current) || isOpX<LT>(current) || isOpX<GT>(current)) {
           if (found) {
-            // this would violate assumption 1
-            valid = false;
-            nodes_to_traverse.resize(0);
+            cond = mk<AND>(cond, current);
           } else {
             found = true;
             cond = current;
           }
         } else {
-          // this would violate assumption 2 or 3
-          // TODO: this can be allowed if we consider more ops e.g. itp
-          // but for simplificy don't consider it for now
-          valid = false;
-          nodes_to_traverse.resize(0);
+          // this would violate assumption 2 except if there is a De Morgan's rule
+          if (isOpX<NEG>(current) && isOpX<OR>(current->arg(0))) {
+            // Special case that we can use De Morgan to reduce to AND
+            for (int i = 0; i < current->arg(0)->arity(); i++) {
+              nodes_to_traverse.push_back(current->arg(0)->arg(i));
+            }
+          } else {
+            valid = false;
+            if (hasAssign(current)) {
+              // do nothing if there is assignment in the AST rooted from current
+            } else {
+              cond = mk<AND>(cond, current);
+            }
+          }
         }
       }
     }
@@ -105,18 +135,18 @@ namespace ufo
     return robust_body;
   }
 
-  vector<int> find_free_var(Expr body, ExprVector vars, bool &valid) {
-    // Assumption 1: All clause are connected by <AND>
-    // Assumption 2: All clause are either comparisons or assignments
+  vector<bool> find_free_var(Expr body, ExprVector vars, bool &valid) {
+    // Assumption 1: All var assignment clause are connected by <AND>
+    // Assumption 2: We will warn user when cluases are not comparisons, assignments or <AND>
     valid = true;
 
     ExprVector nodes_to_traverse;
     nodes_to_traverse.push_back(body);
     Expr current;
 
-    vector<int> free_inds;
+    vector<bool> free_inds;
     for (int i = 0; i < vars.size(); i++) {
-      free_inds.push_back(i);
+      free_inds.push_back(true);
     }
 
     while (nodes_to_traverse.size() > 0) {
@@ -129,22 +159,28 @@ namespace ufo
         }
       } else if (isOpX<EQ>(current)) {
         bool is_eq = false;
-        for (int k = 0; k < free_inds.size(); k++) {
-          is_eq = (current->left() == vars[free_inds[k]]);
+        for (int k = 0; k < vars.size(); k++) {
+          is_eq = (current->left() == vars[k]);
           if (is_eq) {
-            free_inds.erase(free_inds.begin() + k);
+            free_inds[k] = false;
             break;
           }
+        }
+      } else if (isOpX<NEG>(current) && isOpX<OR>(current->arg(0))) {
+        // Special case that we can use De Morgan to reduce to AND
+        for (int i = 0; i < current->arg(0)->arity(); i++) {
+          nodes_to_traverse.push_back(current->arg(0)->arg(i));
         }
       } else {
         if (!(isOpX<NEQ>(current) || isOpX<LEQ>(current) || isOpX<GEQ>(current) || isOpX<LT>(current) || isOpX<GT>(current))) {
           valid = false;
-          break;
+          outs() << "CAUTION, the following op may result the program to be nondeterministic!\n";
+          outs() << * current << "\n";
         }
       }
     }
 
-    outs() << "success? " << valid << "\n";
+    outs() << "Program safe? " << valid << "\n";
 
     return free_inds;
   }
@@ -310,37 +346,33 @@ inline void equivCheck(string chcfile1, string chcfile2, int mode, string out_va
 
       // assumption: var initialization only happens in init
       bool init_valid1, init_valid2;
-      vector<int> free_var_ind1 = find_free_var(init_body1, init_dstVars1, init_valid1);
-      vector<int> free_var_ind2 = find_free_var(init_body2, init_dstVars2, init_valid2);
+      vector<bool> free_var_ind1 = find_free_var(init_body1, init_dstVars1, init_valid1);
+      vector<bool> free_var_ind2 = find_free_var(init_body2, init_dstVars2, init_valid2);
 
       outs() << "free inds prog1: ";
-      print<int>(free_var_ind1);
+      print<bool>(free_var_ind1);
       outs() << "free inds prog2: ";
-      print<int>(free_var_ind2);
+      print<bool>(free_var_ind2);
 
-      if (free_var_ind1 != free_var_ind2) {
-        outs() << "free variables not equal\n NOT equiv!\n";
-        exit(0);
-      }
+      //if (free_var_ind1 != free_var_ind2) {
+      //  outs() << "free variables not equal\n NOT equiv!\n";
+      //  exit(0);
+      //}
 
       if (!init_valid1) {
-        outs() << "program 1 init not valid\n NOT equiv\n;";
-        exit(0);
+        outs() << "CAUTION, program 1 init may not be safely deterministic!\n";
       }
 
       if (!init_valid2) {
-        outs() << "program 2 init not valid\n NOT equiv\n;";
-        exit(0);
+        outs() << "CAUTION, program 2 init may not be safely deterministic!\n";
       }
 
       if (!valid1) {
-        outs() << "program 1 body not valid\n NOT equiv\n";
-        exit(0);
+        outs() << "CAUTION, program 1 transition may not be safely deterministic!\n";
       }
 
       if (!valid2) {
-        outs() << "program 2 body not valid\n NOT equiv\n";
-        exit(0);
+        outs() << "CAUTION, program 2 transition may not be safely deterministic!\n";
       }
 
       if (transit_srcVars1.size() != transit_srcVars2.size() || transit_dstVars1.size() != transit_dstVars2.size() || transit_srcVars1.size() != transit_dstVars1.size()) {
@@ -486,7 +518,9 @@ inline void equivCheck(string chcfile1, string chcfile2, int mode, string out_va
         Expr out_eq = mk<TRUE>(efac);
 
         for (int k = 0; k < free_var_ind1.size(); k++) {
-          product = mk<AND>(product, mk<EQ>(init_srcVars1[free_var_ind1[k]], init_srcVars2[free_var_ind2[k]]));
+          if (free_var_ind1[k] && free_var_ind2[k]) {
+            product = mk<AND>(product, mk<EQ>(init_srcVars1[k], init_srcVars2[k]));
+          }
         }
 
         //for (int i = 0; i < transit_srcVars1.size(); i++) {
@@ -515,8 +549,27 @@ inline void equivCheck(string chcfile1, string chcfile2, int mode, string out_va
 
         Expr product_neg = mk<AND>(product, mk<NEG>(out_eq));
         Expr product_pos = mk<AND>(product, out_eq);
-        outs() << "Product:\n" << * product_neg << "\n";
-        if ((!utils.isSat(product_neg)) && utils.isSat(product_pos)) outs() << "EQUIV!\n";
+        outs() << "Product:\n" << * product_pos << "\n";
+
+        ZSolver<EZ3> smt(z3);
+        smt.reset();
+        smt.assertExpr(product_pos);
+        if (smt.solve()) {
+          outs() << "found model\n";
+          ZSolver<EZ3>::Model m = smt.getModel();
+          for (int i = 0; i < transit_dstVars1.size(); i++) {
+            Expr v = m.eval(transit_dstVars1[i]);
+            outs() << *v << "\n";
+          }
+        }
+
+        bool ans_neg = (!utils.isSat(product_neg));
+        bool ans_pos = utils.isSat(product_pos);
+        outs() << "product neg: " << ans_neg << "\n";
+        outs() << "product pos: " << ans_pos << "\n";
+
+        if (ans_neg && ans_pos) outs() << "EQUIV!\n";
+        else if (ans_pos) outs() << "Program(s) non-deterministic, but is possible to get same output.\n";
         else outs() << "NOT equiv!\n";
 
         //outs() << "product prog\n" << * product << "\n";
