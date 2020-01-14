@@ -36,5 +36,9 @@ for cmds in [pos_cmds, neg_cmds, non_det_cmds]:
             print(cmd)
             print(ans)
             raise
+        else:
+            print('succdess!')
+            print(cmd)
 
-print('success!')
+
+print('success all cmd!')
